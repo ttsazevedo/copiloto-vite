@@ -590,13 +590,19 @@ const TelaPacientes = ({ pacientes: pacientesProps, onSelect, onNovoPaciente, pa
             <span style={{ width:5, height:5, borderRadius:"50%", background:riscoCor, display:"inline-block" }}/>
             {riscoLetra}
           </span>
-          <span style={{ fontSize:11, color:"#94a3b8", minWidth:60, textAlign:"right" }}>
-            {p.proximaSessao.includes("Hoje") ? (
-              <span style={{ color:"#dc2626", fontWeight:600 }}>
-                {p.proximaSessao.replace("Hoje, ","")}
-              </span>
-            ) : p.proximaSessao.includes("Não") ? "" : p.proximaSessao.split(", ")[1] || p.proximaSessao}
-          </span>
+          {modo === "agenda" ? (
+            <span style={{ fontSize:11, color:"#94a3b8", minWidth:60, textAlign:"right" }}>
+              {p.proximaSessao.includes("Hoje") ? (
+                <span style={{ color:"#dc2626", fontWeight:600 }}>
+                  {p.proximaSessao.replace("Hoje, ","")}
+                </span>
+              ) : p.proximaSessao.includes("Não") ? "" : p.proximaSessao.split(", ")[1] || p.proximaSessao}
+            </span>
+          ) : (
+            <span style={{ fontSize:10, color:"#94a3b8", fontWeight:600 }}>
+              {p.sessoes > 0 ? `${p.sessoes}s` : ""}
+            </span>
+          )}
         </div>
       </div>
     );
@@ -680,37 +686,41 @@ const TelaPacientes = ({ pacientes: pacientesProps, onSelect, onNovoPaciente, pa
         </div>
       ))}
 
-      {/* Lista agrupada */}
+      {/* Lista de pacientes */}
       <div style={{ flex:1, overflowY:"auto", padding: menuAberto ? "8px 0" : "8px 4px" }}>
-        {[
-          { key:"hoje",           label:"Hoje",           lista: grupos.hoje },
-          { key:"semana",         label:"Esta semana",    lista: grupos.semana },
-          { key:"semAgendamento", label:"Sem agendamento",lista: grupos.semAgendamento },
-        ].filter(g => g.lista.length > 0).map(({ key, label, lista }) => {
-          const aberta = secoesAbertas[key];
-          return (
-            <div key={key}>
-              {/* Header da seção — oculto no modo colapsado */}
-              {menuAberto && (
-                <div onClick={() => toggleSecao(key)}
-                  style={{ display:"flex", alignItems:"center", justifyContent:"space-between",
-                    padding:"6px 16px", cursor:"pointer", userSelect:"none" }}>
-                  <span style={{ fontSize:10, fontWeight:700, color:"#94a3b8",
-                    textTransform:"uppercase", letterSpacing:"0.08em" }}>
-                    {label} ({lista.length})
-                  </span>
-                  <span style={{ fontSize:10, color:"#cbd5e1",
-                    transform: aberta ? "rotate(180deg)" : "rotate(0deg)",
-                    transition:"transform 0.2s ease", display:"inline-block" }}>
-                    ▾
-                  </span>
-                </div>
-              )}
-              {/* Linhas dos pacientes */}
-              {aberta && lista.map(p => renderLinha(p))}
-            </div>
-          );
-        })}
+        {modo === "pacientes" ? (
+          /* Modo pacientes: lista plana ordenada por nome, sem agrupamento por data */
+          [...filtrados].sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR")).map(p => renderLinha(p))
+        ) : (
+          /* Modo agenda: agrupado por data da próxima sessão */
+          [
+            { key:"hoje",           label:"Hoje",            lista: grupos.hoje },
+            { key:"semana",         label:"Esta semana",     lista: grupos.semana },
+            { key:"semAgendamento", label:"Sem agendamento", lista: grupos.semAgendamento },
+          ].filter(g => g.lista.length > 0).map(({ key, label, lista }) => {
+            const aberta = secoesAbertas[key];
+            return (
+              <div key={key}>
+                {menuAberto && (
+                  <div onClick={() => toggleSecao(key)}
+                    style={{ display:"flex", alignItems:"center", justifyContent:"space-between",
+                      padding:"6px 16px", cursor:"pointer", userSelect:"none" }}>
+                    <span style={{ fontSize:10, fontWeight:700, color:"#94a3b8",
+                      textTransform:"uppercase", letterSpacing:"0.08em" }}>
+                      {label} ({lista.length})
+                    </span>
+                    <span style={{ fontSize:10, color:"#cbd5e1",
+                      transform: aberta ? "rotate(180deg)" : "rotate(0deg)",
+                      transition:"transform 0.2s ease", display:"inline-block" }}>
+                      ▾
+                    </span>
+                  </div>
+                )}
+                {aberta && lista.map(p => renderLinha(p))}
+              </div>
+            );
+          })
+        )}
       </div>
 
       {/* Footer — visível apenas em modo pacientes */}
