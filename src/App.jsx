@@ -8,6 +8,7 @@ import { salvarPlano, buscarPlano } from "./services/planos.js";
 import { testarChavesIA } from "./services/testarIA.js";
 import { listarSessoes, criarSessao } from "./services/sessoes.js";
 import { listarPacientes, atualizarPaciente, excluirPaciente, criarPaciente as criarPacienteService } from "./services/pacientes.js";
+import { listarAgendamentos } from "./services/agendamentos.js";
 
 // ─── HOOK DE BREAKPOINT ───────────────────────────────────────────────────────
 const useBreakpoint = () => {
@@ -502,7 +503,7 @@ const CORES_AVATAR = ["#6366f1","#0ea5e9","#10b981","#f59e0b","#ec4899","#8b5cf6
 const gerarIniciais = (nome) =>
   nome.trim().split(/\s+/).slice(0,2).map(p => p[0].toUpperCase()).join("");
 
-const TelaPacientes = ({ pacientes: pacientesProps, onSelect, onNovoPaciente, pacienteSelecionado, menuAberto, onClose, terapeutaId }) => {
+const TelaPacientes = ({ pacientes: pacientesProps, onSelect, onNovoPaciente, pacienteSelecionado, menuAberto, onClose, terapeutaId, modo = "pacientes" }) => {
   const [busca, setBusca] = useState("");
   const [novosPacientes, setNovosPacientes] = useState([]);
   const [modalAberto, setModalAberto] = useState(false);
@@ -644,23 +645,17 @@ const TelaPacientes = ({ pacientes: pacientesProps, onSelect, onNovoPaciente, pa
   };
 
   return (
-    <div style={{ height:"100%", display:"flex", flexDirection:"column" }}>
+    <div style={{ height: menuAberto ? "auto" : "100%", display:"flex", flexDirection:"column" }}>
 
-      {/* Header — oculto quando colapsado */}
-      {menuAberto && (
-        <div style={{ padding:"24px 24px 16px", borderBottom:"1px solid #f1f5f9" }}>
-          <div style={{ fontSize:11, fontWeight:700, letterSpacing:"0.08em",
-            color:"#94a3b8", textTransform:"uppercase", marginBottom:4 }}>
-            Hoje — {new Date().toLocaleDateString("pt-BR",{weekday:"long",day:"numeric",month:"long"})}
-          </div>
-          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16 }}>
-            <div style={{ fontSize:20, fontWeight:700, color:"#0f172a" }}>
-              Meus pacientes
+      {/* Campo de busca — visível apenas em modo pacientes expandido */}
+      {menuAberto && modo === "pacientes" && (
+        <div style={{ padding:"10px 12px", borderBottom:"1px solid #f1f5f9" }}>
+          {onClose && (
+            <div style={{ display:"flex", justifyContent:"flex-end", marginBottom:6 }}>
+              <button onClick={onClose} style={{ background:"#f1f5f9", border:"none", borderRadius:8,
+                padding:"4px 10px", cursor:"pointer", fontSize:16, color:"#64748b" }}>✕</button>
             </div>
-            {onClose && (
-              <button onClick={onClose} style={{ background:"#f1f5f9", border:"none", borderRadius:8, padding:"6px 10px", cursor:"pointer", fontSize:18, color:"#64748b" }}>✕</button>
-            )}
-          </div>
+          )}
           <input
             value={busca}
             onChange={e => setBusca(e.target.value)}
@@ -672,8 +667,8 @@ const TelaPacientes = ({ pacientes: pacientesProps, onSelect, onNovoPaciente, pa
         </div>
       )}
 
-      {/* Alertas rápidos — ocultos quando colapsado */}
-      {menuAberto && todos.filter(p => p.risco === "alto").map(p => (
+      {/* Alertas rápidos — visíveis apenas em modo pacientes */}
+      {menuAberto && modo === "pacientes" && todos.filter(p => p.risco === "alto").map(p => (
         <div key={p.id} style={{ margin:"12px 16px 0", padding:"10px 14px",
           background:"#fff1f2", border:"1px solid #fecdd3", borderRadius:10,
           display:"flex", alignItems:"center", gap:10 }}>
@@ -718,46 +713,48 @@ const TelaPacientes = ({ pacientes: pacientesProps, onSelect, onNovoPaciente, pa
         })}
       </div>
 
-      {/* Footer */}
-      <div style={{ borderTop:"1px solid #f1f5f9", flexShrink:0 }}>
-        {/* Botão novo paciente */}
-        {menuAberto ? (
-          <div style={{ padding:"12px 16px 0" }}>
-            <button onClick={() => setModalAberto(true)}
-              style={{ width:"100%", padding:"9px 0", background:"#6366f1", color:"#fff",
-                border:"none", borderRadius:10, fontSize:13, fontWeight:700,
-                cursor:"pointer", letterSpacing:"0.02em" }}>
-              + Novo paciente
-            </button>
-          </div>
-        ) : (
-          <div style={{ display:"flex", justifyContent:"center", padding:"10px 0" }}>
-            <button onClick={() => setModalAberto(true)} title="Novo paciente"
-              style={{ width:36, height:36, background:"#6366f1", color:"#fff",
-                border:"none", borderRadius:8, fontSize:20, fontWeight:700,
-                cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
-              +
-            </button>
-          </div>
-        )}
+      {/* Footer — visível apenas em modo pacientes */}
+      {modo === "pacientes" && (
+        <div style={{ borderTop:"1px solid #f1f5f9", flexShrink:0 }}>
+          {/* Botão novo paciente */}
+          {menuAberto ? (
+            <div style={{ padding:"12px 16px 0" }}>
+              <button onClick={() => setModalAberto(true)}
+                style={{ width:"100%", padding:"9px 0", background:"#6366f1", color:"#fff",
+                  border:"none", borderRadius:10, fontSize:13, fontWeight:700,
+                  cursor:"pointer", letterSpacing:"0.02em" }}>
+                + Novo paciente
+              </button>
+            </div>
+          ) : (
+            <div style={{ display:"flex", justifyContent:"center", padding:"10px 0" }}>
+              <button onClick={() => setModalAberto(true)} title="Novo paciente"
+                style={{ width:36, height:36, background:"#6366f1", color:"#fff",
+                  border:"none", borderRadius:8, fontSize:20, fontWeight:700,
+                  cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                +
+              </button>
+            </div>
+          )}
 
-        {/* Stats — ocultos quando colapsado */}
-        {menuAberto && (
-          <div style={{ padding:"12px 24px 14px", display:"flex", gap:24 }}>
-            {[
-              { label:"Pacientes", val: todos.length },
-              { label:"Sessões hoje", val: todos.filter(p=>p.proximaSessao.includes("Hoje")).length },
-              { label:"Alertas", val: todos.filter(p=>p.risco==="alto").length },
-            ].map(({ label, val }) => (
-              <div key={label}>
-                <div style={{ fontSize:18, fontWeight:800, color:"#0f172a" }}>{val}</div>
-                <div style={{ fontSize:10, color:"#94a3b8", fontWeight:600, textTransform:"uppercase",
-                  letterSpacing:"0.06em" }}>{label}</div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+          {/* Stats — ocultos quando colapsado */}
+          {menuAberto && (
+            <div style={{ padding:"12px 24px 14px", display:"flex", gap:24 }}>
+              {[
+                { label:"Pacientes", val: todos.length },
+                { label:"Sessões hoje", val: todos.filter(p=>p.proximaSessao.includes("Hoje")).length },
+                { label:"Alertas", val: todos.filter(p=>p.risco==="alto").length },
+              ].map(({ label, val }) => (
+                <div key={label}>
+                  <div style={{ fontSize:18, fontWeight:800, color:"#0f172a" }}>{val}</div>
+                  <div style={{ fontSize:10, color:"#94a3b8", fontWeight:600, textTransform:"uppercase",
+                    letterSpacing:"0.06em" }}>{label}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Popover hover card */}
       {hoverPaciente && (
@@ -831,7 +828,7 @@ const TelaPacientes = ({ pacientes: pacientesProps, onSelect, onNovoPaciente, pa
       )}
 
       {/* Modal novo paciente */}
-      {modalAberto && (
+      {modo === "pacientes" && modalAberto && (
         <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.4)", zIndex:100,
           display:"flex", alignItems:"center", justifyContent:"center" }}
           onClick={e => e.target === e.currentTarget && setModalAberto(false)}>
@@ -3023,6 +3020,21 @@ const TelaInsights = ({ paciente, analise }) => {
   );
 };
 
+// ─── TELA: CALENDÁRIO SEMANAL (implementação na Etapa 3) ─────────────────────────
+// Placeholder: será substituído pelo componente completo
+const TelaCalendario = ({ agendamentos, setAgendamentos, pacientes, terapeutaId, onIrParaCopiloto }) => (
+  <div style={{ display:"flex", flexDirection:"column", alignItems:"center",
+    justifyContent:"center", height:"100%", gap:12, color:"#94a3b8" }}>
+    <div style={{ fontSize:48 }}>📆</div>
+    <div style={{ fontSize:16, fontWeight:700, color:"#64748b" }}>Calendário semanal</div>
+    <div style={{ fontSize:13 }}>
+      {agendamentos.length > 0
+        ? `${agendamentos.length} agendamento(s) carregado(s) — calendário será implementado na Etapa 3`
+        : "Nenhum agendamento encontrado para a semana atual"}
+    </div>
+  </div>
+);
+
 // ─── APP PRINCIPAL ──────────────────────────────────────────────────────────────
 export default function App() {
   const bp = useBreakpoint();
@@ -3035,6 +3047,9 @@ export default function App() {
   const [mostrarPacientes, setMostrarPacientes] = useState(false);
   const [sessaoAuth, setSessaoAuth] = useState(null);
   const [carregandoAuth, setCarregandoAuth] = useState(true);
+  const [secaoAtiva, setSecaoAtiva] = useState("agenda");   // "agenda" | "pacientes" | null
+  const [abaAgenda, setAbaAgenda] = useState("hoje");        // "hoje" | "calendario"
+  const [agendamentos, setAgendamentos] = useState([]);
 
   const mapearPaciente = (p, idx) => ({
     ...p,
@@ -3063,6 +3078,20 @@ export default function App() {
           setPaciente(mapeados[0]);
         }
         // lista vazia → mantém PACIENTES demo já no estado inicial
+
+        // Carrega agendamentos da semana corrente
+        const hoje = new Date();
+        const dom = new Date(hoje); dom.setDate(hoje.getDate() - hoje.getDay()); dom.setHours(0,0,0,0);
+        const sab = new Date(dom); sab.setDate(dom.getDate() + 6); sab.setHours(23,59,59,999);
+        listarAgendamentos(sessao.user.id, dom.toISOString(), sab.toISOString())
+          .then(({ data }) => { if (data) setAgendamentos(data); });
+      } else {
+        // Modo mock: carrega agendamentos simulados
+        const hoje = new Date();
+        const dom = new Date(hoje); dom.setDate(hoje.getDate() - hoje.getDay()); dom.setHours(0,0,0,0);
+        const sab = new Date(dom); sab.setDate(dom.getDate() + 6); sab.setHours(23,59,59,999);
+        listarAgendamentos("demo", dom.toISOString(), sab.toISOString())
+          .then(({ data }) => { if (data) setAgendamentos(data); });
       }
     });
     return () => data?.subscription?.unsubscribe?.();
@@ -3263,15 +3292,115 @@ export default function App() {
           </button>
         </div>
 
-        <div style={{ flex:1, overflow:"hidden" }}>
-          <TelaPacientes
-            pacientes={pacientesLista}
-            onSelect={p => { setPaciente(p); setAba("historico"); }}
-            pacienteSelecionado={paciente}
-            onNovoPaciente={handleNovoPaciente}
-            terapeutaId={terapeutaId}
-            menuAberto={menuAberto} />
-        </div>
+        {/* Acordeão de seções — visível quando expandido */}
+        {menuAberto ? (
+          <div style={{ flex:1, overflowY:"auto", display:"flex", flexDirection:"column" }}>
+
+            {/* ── SEÇÃO AGENDA ── */}
+            <div>
+              <div
+                onClick={() => setSecaoAtiva(s => s === "agenda" ? null : "agenda")}
+                style={{ display:"flex", alignItems:"center", justifyContent:"space-between",
+                  padding:"10px 16px", cursor:"pointer", userSelect:"none",
+                  background: secaoAtiva === "agenda" ? "#f5f3ff" : "transparent",
+                  borderBottom:"1px solid #f1f5f9" }}>
+                <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                  <span>📅</span>
+                  <span style={{ fontSize:12, fontWeight:700, textTransform:"uppercase",
+                    letterSpacing:"0.06em",
+                    color: secaoAtiva === "agenda" ? "#4f46e5" : "#64748b" }}>Agenda</span>
+                </div>
+                <span style={{ fontSize:10, color:"#cbd5e1", display:"inline-block",
+                  transform: secaoAtiva === "agenda" ? "rotate(180deg)" : "rotate(0deg)",
+                  transition:"transform 0.2s ease" }}>▾</span>
+              </div>
+
+              {secaoAtiva === "agenda" && (
+                <>
+                  {/* Sub-itens */}
+                  <div style={{ background:"#fafafa", borderBottom:"1px solid #f1f5f9" }}>
+                    {[
+                      { id:"hoje",       label:"Hoje / Amanhã", icon:"🗓️" },
+                      { id:"calendario", label:"Calendário",    icon:"📆" },
+                    ].map(sub => (
+                      <div key={sub.id}
+                        onClick={() => setAbaAgenda(sub.id)}
+                        style={{ display:"flex", alignItems:"center", gap:8,
+                          padding:"7px 16px 7px 28px", cursor:"pointer",
+                          background: abaAgenda === sub.id ? "#ede9fe" : "transparent",
+                          borderLeft: abaAgenda === sub.id ? "3px solid #6366f1" : "3px solid transparent",
+                          transition:"all 0.1s" }}>
+                        <span style={{ fontSize:12 }}>{sub.icon}</span>
+                        <span style={{ fontSize:12,
+                          fontWeight: abaAgenda === sub.id ? 700 : 500,
+                          color: abaAgenda === sub.id ? "#4f46e5" : "#64748b" }}>
+                          {sub.label}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Lista de pacientes para "Hoje / Amanhã" */}
+                  {abaAgenda === "hoje" && (
+                    <TelaPacientes
+                      modo="agenda"
+                      pacientes={pacientesLista}
+                      onSelect={p => { setPaciente(p); setAba("historico"); }}
+                      pacienteSelecionado={paciente}
+                      terapeutaId={terapeutaId}
+                      menuAberto={true}
+                    />
+                  )}
+                </>
+              )}
+            </div>
+
+            {/* ── SEÇÃO PACIENTES ── */}
+            <div>
+              <div
+                onClick={() => setSecaoAtiva(s => s === "pacientes" ? null : "pacientes")}
+                style={{ display:"flex", alignItems:"center", justifyContent:"space-between",
+                  padding:"10px 16px", cursor:"pointer", userSelect:"none",
+                  background: secaoAtiva === "pacientes" ? "#f5f3ff" : "transparent",
+                  borderBottom:"1px solid #f1f5f9" }}>
+                <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                  <span>👤</span>
+                  <span style={{ fontSize:12, fontWeight:700, textTransform:"uppercase",
+                    letterSpacing:"0.06em",
+                    color: secaoAtiva === "pacientes" ? "#4f46e5" : "#64748b" }}>Pacientes</span>
+                </div>
+                <span style={{ fontSize:10, color:"#cbd5e1", display:"inline-block",
+                  transform: secaoAtiva === "pacientes" ? "rotate(180deg)" : "rotate(0deg)",
+                  transition:"transform 0.2s ease" }}>▾</span>
+              </div>
+
+              {secaoAtiva === "pacientes" && (
+                <TelaPacientes
+                  modo="pacientes"
+                  pacientes={pacientesLista}
+                  onSelect={p => { setPaciente(p); setAba("historico"); }}
+                  pacienteSelecionado={paciente}
+                  onNovoPaciente={handleNovoPaciente}
+                  terapeutaId={terapeutaId}
+                  menuAberto={true}
+                />
+              )}
+            </div>
+
+          </div>
+        ) : (
+          /* Menu colapsado — apenas avatares */
+          <div style={{ flex:1, overflow:"hidden" }}>
+            <TelaPacientes
+              pacientes={pacientesLista}
+              onSelect={p => { setPaciente(p); setAba("historico"); }}
+              pacienteSelecionado={paciente}
+              onNovoPaciente={handleNovoPaciente}
+              terapeutaId={terapeutaId}
+              menuAberto={false}
+            />
+          </div>
+        )}
       </div>
 
       {/* Área principal */}
@@ -3282,25 +3411,35 @@ export default function App() {
           padding:"0 28px", display:"flex", alignItems:"center",
           height:56, flexShrink:0, gap:4 }}>
 
-          {/* Breadcrumb */}
-          <div style={{ display:"flex", alignItems:"center", gap:8, marginRight:24 }}>
-            <Avatar iniciais={paciente.iniciais} cor={paciente.cor} tamanho={28} />
-            <span style={{ fontSize:14, fontWeight:700, color:"#0f172a" }}>{paciente.nome}</span>
-            <span style={{ fontSize:12, color:"#cbd5e1" }}>·</span>
-            <span style={{ fontSize:12, color:"#94a3b8" }}>Sessão {paciente.sessoes}</span>
-          </div>
+          {abaAgenda === "calendario" ? (
+            /* Contexto do calendário */
+            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+              <span style={{ fontSize:18 }}>📆</span>
+              <span style={{ fontSize:14, fontWeight:700, color:"#0f172a" }}>Agenda semanal</span>
+            </div>
+          ) : (
+            <>
+              {/* Breadcrumb */}
+              <div style={{ display:"flex", alignItems:"center", gap:8, marginRight:24 }}>
+                <Avatar iniciais={paciente.iniciais} cor={paciente.cor} tamanho={28} />
+                <span style={{ fontSize:14, fontWeight:700, color:"#0f172a" }}>{paciente.nome}</span>
+                <span style={{ fontSize:12, color:"#cbd5e1" }}>·</span>
+                <span style={{ fontSize:12, color:"#94a3b8" }}>Sessão {paciente.sessoes}</span>
+              </div>
 
-          {/* Abas */}
-          {abas.map(a => (
-            <button key={a.id} onClick={() => setAba(a.id)}
-              style={{ padding:"6px 16px", border:"none", borderRadius:8, cursor:"pointer",
-                background: aba === a.id ? "#f0f0ff" : "transparent",
-                color: aba === a.id ? "#4f46e5" : "#64748b",
-                fontWeight: aba === a.id ? 700 : 500, fontSize:13,
-                transition:"all 0.15s" }}>
-              {a.icon} {a.label}
-            </button>
-          ))}
+              {/* Abas */}
+              {abas.map(a => (
+                <button key={a.id} onClick={() => setAba(a.id)}
+                  style={{ padding:"6px 16px", border:"none", borderRadius:8, cursor:"pointer",
+                    background: aba === a.id ? "#f0f0ff" : "transparent",
+                    color: aba === a.id ? "#4f46e5" : "#64748b",
+                    fontWeight: aba === a.id ? 700 : 500, fontSize:13,
+                    transition:"all 0.15s" }}>
+                  {a.icon} {a.label}
+                </button>
+              ))}
+            </>
+          )}
 
           {/* Próxima sessão destaque */}
           <div style={{ marginLeft:"auto", padding:"5px 14px",
@@ -3314,12 +3453,24 @@ export default function App() {
 
         {/* Conteúdo */}
         <div style={{ flex:1, overflow:"hidden" }}>
-          {aba === "historico" && <TelaHistorico paciente={paciente} />}
-          {aba === "mural" && <TelaMural paciente={paciente} />}
-          {aba === "plano" && <TelaPlano key={paciente.id} paciente={paciente} terapeutaId={terapeutaId} />}
-          {aba === "importar" && <TelaImportar paciente={paciente} terapeutaId={terapeutaId} onSessaoSalva={handleSessaoSalva} />}
-          {aba === "insights" && <TelaInsights paciente={paciente} analise={analisarPadroes(paciente.sessoesList)} />}
-          {aba === "perfil" && <TelaPerfil paciente={paciente} onAtualizar={handleAtualizarPaciente} onExcluir={handleExcluirPaciente} />}
+          {abaAgenda === "calendario" ? (
+            <TelaCalendario
+              agendamentos={agendamentos}
+              setAgendamentos={setAgendamentos}
+              pacientes={pacientesLista}
+              terapeutaId={terapeutaId}
+              onIrParaCopiloto={p => { setPaciente(p); setAba("historico"); setAbaAgenda("hoje"); }}
+            />
+          ) : (
+            <>
+              {aba === "historico" && <TelaHistorico paciente={paciente} />}
+              {aba === "mural" && <TelaMural paciente={paciente} />}
+              {aba === "plano" && <TelaPlano key={paciente.id} paciente={paciente} terapeutaId={terapeutaId} />}
+              {aba === "importar" && <TelaImportar paciente={paciente} terapeutaId={terapeutaId} onSessaoSalva={handleSessaoSalva} />}
+              {aba === "insights" && <TelaInsights paciente={paciente} analise={analisarPadroes(paciente.sessoesList)} />}
+              {aba === "perfil" && <TelaPerfil paciente={paciente} onAtualizar={handleAtualizarPaciente} onExcluir={handleExcluirPaciente} />}
+            </>
+          )}
         </div>
       </div>
 
