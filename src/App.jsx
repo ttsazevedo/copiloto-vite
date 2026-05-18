@@ -951,16 +951,16 @@ const TelaHistorico = ({ paciente, isMobile = false }) => {
 
       <div style={{ display:"flex", flex:1, minHeight:0, flexDirection: isMobile ? "column" : "row" }}>
         {/* Mobile: dropdown seletor de sessão */}
-        {isMobile && (
+        {isMobile && paciente.sessoesList.length > 0 && (
           <div style={{ padding:"10px 16px", borderBottom:"1px solid #f1f5f9", background:"#fff", flexShrink:0 }}>
             <select
-              value={sessaoAtiva.numero}
+              value={sessaoAtiva?.numero ?? ""}
               onChange={e => setSessaoAtiva(paciente.sessoesList.find(s => s.numero === parseInt(e.target.value)))}
               style={{ width:"100%", padding:"8px 12px", border:"1.5px solid #e2e8f0", borderRadius:8, fontSize:13 }}
             >
               {paciente.sessoesList.map(s => (
                 <option key={s.numero} value={s.numero}>
-                  Sessão {s.numero} — {s.data}{s.alertas.length > 0 ? " ⚠️" : ""}
+                  Sessão {s.numero} — {s.data}{s.alertas?.length > 0 ? " ⚠️" : ""}
                 </option>
               ))}
             </select>
@@ -974,8 +974,8 @@ const TelaHistorico = ({ paciente, isMobile = false }) => {
                 letterSpacing:"0.08em" }}>Sessões</div>
             </div>
             {paciente.sessoesList.map(s => {
-              const ativa = sessaoAtiva.numero === s.numero;
-              const temAlerta = s.alertas.length > 0;
+              const ativa = sessaoAtiva?.numero === s.numero;
+              const temAlerta = s.alertas?.length > 0;
               return (
                 <div key={s.numero} onClick={() => setSessaoAtiva(s)}
                   style={{ padding:"10px 16px", cursor:"pointer",
@@ -997,7 +997,15 @@ const TelaHistorico = ({ paciente, isMobile = false }) => {
 
         {/* Detalhe da sessão */}
         <div style={{ flex:1, overflowY:"auto", padding: isMobile ? "16px" : "20px 24px" }}>
-          {sessaoAtiva.alertas.length > 0 && (
+          {!sessaoAtiva && (
+            <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
+              height:"100%", gap:12, color:"#94a3b8", textAlign:"center", padding:32 }}>
+              <div style={{ fontSize:32 }}>📋</div>
+              <div style={{ fontSize:15, fontWeight:700, color:"#64748b" }}>Nenhuma sessão registrada</div>
+              <div style={{ fontSize:13 }}>Use a aba "Importar" para registrar a primeira sessão deste paciente.</div>
+            </div>
+          )}
+          {sessaoAtiva && sessaoAtiva.alertas.length > 0 && (
             <div style={{ background:"#fff1f2", border:"1px solid #fecdd3",
               borderRadius:10, padding:"12px 16px", marginBottom:16 }}>
               <div style={{ fontSize:12, fontWeight:700, color:"#9f1239", marginBottom:6 }}>
@@ -1009,6 +1017,7 @@ const TelaHistorico = ({ paciente, isMobile = false }) => {
             </div>
           )}
 
+          {sessaoAtiva && (
           <div style={{ display:"grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap:16 }}>
             {/* Emoções */}
             <div style={{ background:"#fff", borderRadius:12, padding:"16px",
@@ -1066,10 +1075,10 @@ const TelaHistorico = ({ paciente, isMobile = false }) => {
                 letterSpacing:"0.07em", marginBottom:8 }}>Tarefa de casa</div>
               <div style={{ fontSize:12, color:"#334155", marginBottom:8 }}>{sessaoAtiva.tarefa}</div>
               <div style={{ fontSize:11, fontWeight:600,
-                color: sessaoAtiva.resultadoTarefa.includes("completamente") ? "#065f46" :
-                       sessaoAtiva.resultadoTarefa.includes("Não realizou") ? "#991b1b" : "#92400e",
-                background: sessaoAtiva.resultadoTarefa.includes("completamente") ? "#d1fae5" :
-                            sessaoAtiva.resultadoTarefa.includes("Não realizou") ? "#fee2e2" : "#fef3c7",
+                color: sessaoAtiva.resultadoTarefa?.includes("completamente") ? "#065f46" :
+                       sessaoAtiva.resultadoTarefa?.includes("Não realizou") ? "#991b1b" : "#92400e",
+                background: sessaoAtiva.resultadoTarefa?.includes("completamente") ? "#d1fae5" :
+                            sessaoAtiva.resultadoTarefa?.includes("Não realizou") ? "#fee2e2" : "#fef3c7",
                 padding:"6px 10px", borderRadius:6 }}>
                 {sessaoAtiva.resultadoTarefa}
               </div>
@@ -1089,6 +1098,7 @@ const TelaHistorico = ({ paciente, isMobile = false }) => {
               )}
             </div>
           </div>
+          )}
         </div>
       </div>
     </div>
