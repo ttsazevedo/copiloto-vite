@@ -3326,31 +3326,23 @@ export default function App() {
               </div>
 
               {secaoAtiva === "agenda" && (
-                <>
-                  {/* Sub-itens */}
-                  <div style={{ background:"#fafafa", borderBottom:"1px solid #f1f5f9" }}>
-                    {[
-                      { id:"hoje",       label:"Hoje / Amanhã", icon:"🗓️" },
-                      { id:"calendario", label:"Calendário",    icon:"📆" },
-                    ].map(sub => (
-                      <div key={sub.id}
-                        onClick={() => setAbaAgenda(sub.id)}
-                        style={{ display:"flex", alignItems:"center", gap:8,
-                          padding:"7px 16px 7px 28px", cursor:"pointer",
-                          background: abaAgenda === sub.id ? "#ede9fe" : "transparent",
-                          borderLeft: abaAgenda === sub.id ? "3px solid #6366f1" : "3px solid transparent",
-                          transition:"all 0.1s" }}>
-                        <span style={{ fontSize:12 }}>{sub.icon}</span>
-                        <span style={{ fontSize:12,
-                          fontWeight: abaAgenda === sub.id ? 700 : 500,
-                          color: abaAgenda === sub.id ? "#4f46e5" : "#64748b" }}>
-                          {sub.label}
-                        </span>
-                      </div>
-                    ))}
+                <div style={{ background:"#fafafa" }}>
+                  {/* Sub-item: Hoje / Amanhã */}
+                  <div
+                    onClick={() => setAbaAgenda("hoje")}
+                    style={{ display:"flex", alignItems:"center", gap:8,
+                      padding:"7px 16px 7px 28px", cursor:"pointer",
+                      background: abaAgenda === "hoje" ? "#ede9fe" : "transparent",
+                      borderLeft: abaAgenda === "hoje" ? "3px solid #6366f1" : "3px solid transparent",
+                      borderBottom:"1px solid #f1f5f9", transition:"all 0.1s" }}>
+                    <span style={{ fontSize:12 }}>🗓️</span>
+                    <span style={{ fontSize:12, fontWeight: abaAgenda === "hoje" ? 700 : 500,
+                      color: abaAgenda === "hoje" ? "#4f46e5" : "#64748b" }}>
+                      Hoje / Amanhã
+                    </span>
                   </div>
 
-                  {/* Lista de pacientes para "Hoje / Amanhã" */}
+                  {/* Lista de pacientes — aninhada sob "Hoje / Amanhã" */}
                   {abaAgenda === "hoje" && (
                     <TelaPacientes
                       modo="agenda"
@@ -3361,7 +3353,22 @@ export default function App() {
                       menuAberto={true}
                     />
                   )}
-                </>
+
+                  {/* Sub-item: Calendário */}
+                  <div
+                    onClick={() => setAbaAgenda("calendario")}
+                    style={{ display:"flex", alignItems:"center", gap:8,
+                      padding:"7px 16px 7px 28px", cursor:"pointer",
+                      background: abaAgenda === "calendario" ? "#ede9fe" : "transparent",
+                      borderLeft: abaAgenda === "calendario" ? "3px solid #6366f1" : "3px solid transparent",
+                      borderTop:"1px solid #f1f5f9", transition:"all 0.1s" }}>
+                    <span style={{ fontSize:12 }}>📆</span>
+                    <span style={{ fontSize:12, fontWeight: abaAgenda === "calendario" ? 700 : 500,
+                      color: abaAgenda === "calendario" ? "#4f46e5" : "#64748b" }}>
+                      Calendário
+                    </span>
+                  </div>
+                </div>
               )}
             </div>
 
@@ -3388,7 +3395,7 @@ export default function App() {
                 <TelaPacientes
                   modo="pacientes"
                   pacientes={pacientesLista}
-                  onSelect={p => { setPaciente(p); setAba("historico"); }}
+                  onSelect={p => { setPaciente(p); setAba("historico"); setAbaAgenda("hoje"); }}
                   pacienteSelecionado={paciente}
                   onNovoPaciente={handleNovoPaciente}
                   terapeutaId={terapeutaId}
