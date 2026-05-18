@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { onAuthStateChange, signOut } from "./services/auth.js";
-import { hasSupabase, testarConexao } from "./services/supabase.js";
+import { supabase, hasSupabase, testarConexao } from "./services/supabase.js";
 import TelaLogin from "./components/TelaLogin.jsx";
 import TelaCarregando from "./components/TelaCarregando.jsx";
 import { extrairSessaoDeTexto, gerarPlanoSessao } from "./services/ia.js";
@@ -8,7 +8,11 @@ import { salvarPlano, buscarPlano } from "./services/planos.js";
 import { testarChavesIA } from "./services/testarIA.js";
 import { listarSessoes, criarSessao } from "./services/sessoes.js";
 import { listarPacientes, atualizarPaciente, excluirPaciente, criarPaciente as criarPacienteService } from "./services/pacientes.js";
-import { listarAgendamentos } from "./services/agendamentos.js";
+import { listarAgendamentos, criarAgendamento, atualizarAgendamento, cancelarAgendamento } from "./services/agendamentos.js";
+import { criarTarefa, listarTarefas } from "./services/tarefas.js";
+import { criarConvite, gerarLinkConvite, listarConvitesPaciente, revogarConvite } from "./services/convites.js";
+import { listarRegistrosDoPaciente } from "./services/registros.js";
+import { listarHumorPaciente } from "./services/humor_service.js";
 
 // ─── HOOK DE BREAKPOINT ───────────────────────────────────────────────────────
 const useBreakpoint = () => {
@@ -503,10 +507,12 @@ const CORES_AVATAR = ["#6366f1","#0ea5e9","#10b981","#f59e0b","#ec4899","#8b5cf6
 const gerarIniciais = (nome) =>
   nome.trim().split(/\s+/).slice(0,2).map(p => p[0].toUpperCase()).join("");
 
-const TelaPacientes = ({ pacientes: pacientesProps, onSelect, onNovoPaciente, pacienteSelecionado, menuAberto, onClose, terapeutaId, modo = "pacientes" }) => {
+const TelaPacientes = ({ pacientes: pacientesProps, onSelect, onNovoPaciente, pacienteSelecionado, menuAberto, onClose, terapeutaId, modo = "pacientes", onAbrirAgendamento }) => {
   const [busca, setBusca] = useState("");
   const [novosPacientes, setNovosPacientes] = useState([]);
   const [modalAberto, setModalAberto] = useState(false);
+  const [passoCriar, setPassoCriar] = useState(null);
+  const [pacienteCriadoTemp, setPacienteCriadoTemp] = useState(null);
   const [formNome, setFormNome] = useState("");
   const [formIdade, setFormIdade] = useState("");
   const [formQueixa, setFormQueixa] = useState("");
@@ -644,10 +650,15 @@ const TelaPacientes = ({ pacientes: pacientesProps, onSelect, onNovoPaciente, pa
     } else {
       setNovosPacientes(prev => [...prev, novo]);
     }
-    setModalAberto(false);
     setFormNome(""); setFormIdade(""); setFormQueixa("");
     setFormLinha("tcc"); setFormRisco("baixo");
-    onSelect(novo);
+    if (onAbrirAgendamento) {
+      setPacienteCriadoTemp(novo);
+      setPassoCriar("sucesso");
+    } else {
+      setModalAberto(false);
+      onSelect(novo);
+    }
   };
 
   return (
@@ -837,8 +848,52 @@ const TelaPacientes = ({ pacientes: pacientesProps, onSelect, onNovoPaciente, pa
         </div>
       )}
 
-      {/* Modal novo paciente */}
-      {modo === "pacientes" && modalAberto && (
+      {/* Modal novo paciente — Passo 2: confirmar agendamento */}
+      {modo === "pacientes" && modalAberto && passoCriar === "sucesso" && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.4)", zIndex:100,
+          display:"flex", alignItems:"center", justifyContent:"center" }}>
+          <div style={{ background:"#fff", borderRadius:16, padding:"32px 28px 28px",
+            width:420, boxShadow:"0 20px 60px rgba(0,0,0,0.15)", textAlign:"center" }}>
+            <div style={{ fontSize:40, marginBottom:12 }}>✅</div>
+            <div style={{ fontSize:16, fontWeight:800, color:"#0f172a", marginBottom:8 }}>
+              Paciente criado com sucesso!
+            </div>
+            <div style={{ fontSize:13, color:"#64748b", marginBottom:28 }}>
+              Deseja agendar a primeira sessão de{" "}
+              <strong style={{ color:"#0f172a" }}>{pacienteCriadoTemp?.nome}</strong> agora?
+            </div>
+            <div style={{ display:"flex", gap:10, justifyContent:"center" }}>
+              <button
+                onClick={() => {
+                  setModalAberto(false);
+                  setPassoCriar(null);
+                  onSelect(pacienteCriadoTemp);
+                  setPacienteCriadoTemp(null);
+                }}
+                style={{ padding:"9px 20px", background:"#f1f5f9", color:"#475569",
+                  border:"none", borderRadius:8, fontSize:13, fontWeight:700, cursor:"pointer" }}>
+                Fazer isso depois
+              </button>
+              <button
+                onClick={() => {
+                  const p = pacienteCriadoTemp;
+                  setModalAberto(false);
+                  setPassoCriar(null);
+                  setPacienteCriadoTemp(null);
+                  onSelect(p);
+                  onAbrirAgendamento(p);
+                }}
+                style={{ padding:"9px 20px", background:"#6366f1", color:"#fff",
+                  border:"none", borderRadius:8, fontSize:13, fontWeight:700, cursor:"pointer" }}>
+                📅 Agendar primeira sessão
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal novo paciente — Passo 1: formulário */}
+      {modo === "pacientes" && modalAberto && passoCriar !== "sucesso" && (
         <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.4)", zIndex:100,
           display:"flex", alignItems:"center", justifyContent:"center" }}
           onClick={e => e.target === e.currentTarget && setModalAberto(false)}>
@@ -911,12 +966,34 @@ const TelaPacientes = ({ pacientes: pacientesProps, onSelect, onNovoPaciente, pa
 };
 
 // ─── TELA: HISTÓRICO DO PACIENTE ───────────────────────────────────────────────
-const TelaHistorico = ({ paciente, isMobile = false }) => {
-  const [sessaoAtiva, setSessaoAtiva] = useState(paciente.sessoesList[0]);
+const TelaHistorico = ({ paciente, isMobile = false, onAgendar, proximaSessao }) => {
+  const [sessaoAtiva, setSessaoAtiva] = useState(paciente.sessoesList[0] ?? null);
+  const [registrosApp, setRegistrosApp] = useState([]);
+  const [humorApp, setHumorApp] = useState([]);
+  const [mostrarRegistros, setMostrarRegistros] = useState(false);
 
   useEffect(() => {
-    setSessaoAtiva(paciente.sessoesList[0]);
+    setSessaoAtiva(paciente.sessoesList[0] ?? null);
+    setRegistrosApp([]);
+    setHumorApp([]);
   }, [paciente.id]);
+
+  // Atualiza sessaoAtiva quando sessões chegam depois da montagem
+  useEffect(() => {
+    if (!sessaoAtiva && paciente.sessoesList.length > 0) {
+      setSessaoAtiva(paciente.sessoesList[0]);
+    }
+  }, [paciente.sessoesList.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Sessão a exibir: usa sessaoAtiva ou fallback para a primeira disponível
+  const sessaoMostrar = sessaoAtiva ?? paciente.sessoesList[0] ?? null;
+
+  // Carrega registros do app ao abrir painel (lazy)
+  useEffect(() => {
+    if (!mostrarRegistros || typeof paciente.id !== "string") return;
+    listarRegistrosDoPaciente(paciente.id).then(({ data }) => setRegistrosApp(data ?? []));
+    listarHumorPaciente(paciente.id, 14).then(({ data }) => setHumorApp(data ?? []));
+  }, [mostrarRegistros, paciente.id]);
 
   return (
     <div style={{ height:"100%", display:"flex", flexDirection:"column", overflowY:"auto" }}>
@@ -930,8 +1007,16 @@ const TelaHistorico = ({ paciente, isMobile = false }) => {
             <div style={{ fontSize:20, fontWeight:800, color:"#0f172a" }}>{paciente.nome}</div>
             <div style={{ fontSize:13, color:"#64748b" }}>{paciente.queixa}</div>
           </div>
-          <div style={{ marginLeft:"auto" }}>
+          <div style={{ marginLeft:"auto", display:"flex", alignItems:"center", gap:8 }}>
             <RiscoTag nivel={paciente.risco} />
+            {onAgendar && (
+              <button onClick={() => onAgendar()}
+                style={{ padding:"5px 12px", background:"#6366f1", color:"#fff",
+                  border:"none", borderRadius:8, fontSize:11, fontWeight:700, cursor:"pointer",
+                  whiteSpace:"nowrap" }}>
+                📅 Agendar
+              </button>
+            )}
           </div>
         </div>
 
@@ -941,12 +1026,13 @@ const TelaHistorico = ({ paciente, isMobile = false }) => {
             { label:"Sessões", val: paciente.sessoes, sub:"realizadas" },
             { label:"Adesão", val: `${paciente.adesao}%`, sub:"tarefas de casa" },
             { label:"Tarefas", val: `${paciente.cumprimentoTarefas}%`, sub:"cumprimento" },
-            { label:"Início", val: paciente.inicio, sub:"em acompanhamento" },
+            { label:"Próxima", val: proximaSessao || "Não agendado", sub:"sessão", destaque: proximaSessao?.includes("Hoje") },
             { label:"Abordagem", val: BANCO_PALAVRAS[paciente.linha || "tcc"].label, sub:"linha terapêutica" },
-          ].map(({ label, val, sub }) => (
-            <div key={label} style={{ background:"#fff", borderRadius:10, padding:"10px 12px",
-              border:"1px solid #f1f5f9" }}>
-              <div style={{ fontSize:16, fontWeight:800, color:"#0f172a" }}>{val}</div>
+          ].map(({ label, val, sub, destaque }) => (
+            <div key={label} style={{ background: destaque ? "#fff1f2" : "#fff", borderRadius:10, padding:"10px 12px",
+              border: destaque ? "1px solid #fecdd3" : "1px solid #f1f5f9" }}>
+              <div style={{ fontSize:destaque ? 12 : 16, fontWeight:800, color: destaque ? "#dc2626" : "#0f172a",
+                overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{val}</div>
               <div style={{ fontSize:10, color:"#94a3b8", fontWeight:700, textTransform:"uppercase",
                 letterSpacing:"0.05em" }}>{label}</div>
               <div style={{ fontSize:10, color:"#cbd5e1" }}>{sub}</div>
@@ -1004,7 +1090,7 @@ const TelaHistorico = ({ paciente, isMobile = false }) => {
 
         {/* Detalhe da sessão */}
         <div style={{ flex:1, overflowY:"auto", padding: isMobile ? "16px" : "20px 24px" }}>
-          {!sessaoAtiva && (
+          {!sessaoMostrar && (
             <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
               height:"100%", gap:12, color:"#94a3b8", textAlign:"center", padding:32 }}>
               <div style={{ fontSize:32 }}>📋</div>
@@ -1012,26 +1098,26 @@ const TelaHistorico = ({ paciente, isMobile = false }) => {
               <div style={{ fontSize:13 }}>Use a aba "Importar" para registrar a primeira sessão deste paciente.</div>
             </div>
           )}
-          {sessaoAtiva && sessaoAtiva.alertas.length > 0 && (
+          {sessaoMostrar && sessaoMostrar.alertas.length > 0 && (
             <div style={{ background:"#fff1f2", border:"1px solid #fecdd3",
               borderRadius:10, padding:"12px 16px", marginBottom:16 }}>
               <div style={{ fontSize:12, fontWeight:700, color:"#9f1239", marginBottom:6 }}>
                 ⚠️ Alertas clínicos
               </div>
-              {sessaoAtiva.alertas.map((a,i) => (
+              {sessaoMostrar.alertas.map((a,i) => (
                 <div key={i} style={{ fontSize:12, color:"#be123c" }}>• {a}</div>
               ))}
             </div>
           )}
 
-          {sessaoAtiva && (
+          {sessaoMostrar && (
           <div style={{ display:"grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap:16 }}>
             {/* Emoções */}
             <div style={{ background:"#fff", borderRadius:12, padding:"16px",
               border:"1px solid #f1f5f9" }}>
               <div style={{ fontSize:11, fontWeight:700, color:"#94a3b8", textTransform:"uppercase",
                 letterSpacing:"0.07em", marginBottom:12 }}>Emoções</div>
-              {sessaoAtiva.emocoes.map(e => {
+              {sessaoMostrar.emocoes.map(e => {
                 const cor = e.intensidade > 80 ? "#ef4444" : e.intensidade > 60 ? "#f59e0b" : "#10b981";
                 return <IntensidadeBar key={e.nome} nome={e.nome} valor={e.intensidade} cor={cor}/>;
               })}
@@ -1043,7 +1129,7 @@ const TelaHistorico = ({ paciente, isMobile = false }) => {
               <div style={{ fontSize:11, fontWeight:700, color:"#94a3b8", textTransform:"uppercase",
                 letterSpacing:"0.07em", marginBottom:12 }}>Distorções cognitivas</div>
               <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
-                {sessaoAtiva.distorcoes.map(d => (
+                {sessaoMostrar.distorcoes.map(d => (
                   <Badge key={d} tipo="distorcao">{d}</Badge>
                 ))}
               </div>
@@ -1054,7 +1140,7 @@ const TelaHistorico = ({ paciente, isMobile = false }) => {
               border:"1px solid #f1f5f9", gridColumn: isMobile ? "1" : "1/-1" }}>
               <div style={{ fontSize:11, fontWeight:700, color:"#94a3b8", textTransform:"uppercase",
                 letterSpacing:"0.07em", marginBottom:12 }}>Pensamentos automáticos</div>
-              {sessaoAtiva.pensamentos.map((p,i) => (
+              {sessaoMostrar.pensamentos.map((p,i) => (
                 <div key={i} style={{ fontSize:13, color:"#334155", padding:"8px 12px",
                   background:"#f8fafc", borderRadius:8, marginBottom:6,
                   borderLeft:"3px solid #e2e8f0" }}>
@@ -1069,7 +1155,7 @@ const TelaHistorico = ({ paciente, isMobile = false }) => {
               <div style={{ fontSize:11, fontWeight:700, color:"#94a3b8", textTransform:"uppercase",
                 letterSpacing:"0.07em", marginBottom:12 }}>Técnicas aplicadas</div>
               <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
-                {sessaoAtiva.tecnicas.map(t => (
+                {sessaoMostrar.tecnicas.map(t => (
                   <Badge key={t} tipo="tecnica">{t}</Badge>
                 ))}
               </div>
@@ -1080,14 +1166,14 @@ const TelaHistorico = ({ paciente, isMobile = false }) => {
               border:"1px solid #f1f5f9" }}>
               <div style={{ fontSize:11, fontWeight:700, color:"#94a3b8", textTransform:"uppercase",
                 letterSpacing:"0.07em", marginBottom:8 }}>Tarefa de casa</div>
-              <div style={{ fontSize:12, color:"#334155", marginBottom:8 }}>{sessaoAtiva.tarefa}</div>
+              <div style={{ fontSize:12, color:"#334155", marginBottom:8 }}>{sessaoMostrar.tarefa}</div>
               <div style={{ fontSize:11, fontWeight:600,
-                color: sessaoAtiva.resultadoTarefa?.includes("completamente") ? "#065f46" :
-                       sessaoAtiva.resultadoTarefa?.includes("Não realizou") ? "#991b1b" : "#92400e",
-                background: sessaoAtiva.resultadoTarefa?.includes("completamente") ? "#d1fae5" :
-                            sessaoAtiva.resultadoTarefa?.includes("Não realizou") ? "#fee2e2" : "#fef3c7",
+                color: sessaoMostrar.resultadoTarefa?.includes("completamente") ? "#065f46" :
+                       sessaoMostrar.resultadoTarefa?.includes("Não realizou") ? "#991b1b" : "#92400e",
+                background: sessaoMostrar.resultadoTarefa?.includes("completamente") ? "#d1fae5" :
+                            sessaoMostrar.resultadoTarefa?.includes("Não realizou") ? "#fee2e2" : "#fef3c7",
                 padding:"6px 10px", borderRadius:6 }}>
-                {sessaoAtiva.resultadoTarefa}
+                {sessaoMostrar.resultadoTarefa}
               </div>
             </div>
 
@@ -1096,16 +1182,118 @@ const TelaHistorico = ({ paciente, isMobile = false }) => {
               border:"1px solid #f1f5f9", gridColumn: isMobile ? "1" : "1/-1" }}>
               <div style={{ fontSize:11, fontWeight:700, color:"#94a3b8", textTransform:"uppercase",
                 letterSpacing:"0.07em", marginBottom:8 }}>Evolução clínica</div>
-              <div style={{ fontSize:13, color:"#334155", lineHeight:1.6 }}>{sessaoAtiva.evolucao}</div>
-              {sessaoAtiva.obs && (
+              <div style={{ fontSize:13, color:"#334155", lineHeight:1.6 }}>{sessaoMostrar.evolucao}</div>
+              {sessaoMostrar.obs && (
                 <div style={{ marginTop:10, padding:"8px 12px", background:"#f0f9ff",
                   borderRadius:8, fontSize:12, color:"#0c4a6e", borderLeft:"3px solid #0ea5e9" }}>
-                  💡 {sessaoAtiva.obs}
+                  💡 {sessaoMostrar.obs}
                 </div>
               )}
             </div>
           </div>
           )}
+
+          {/* Registros do app do paciente */}
+          <div style={{ marginTop: sessaoMostrar ? 24 : 0, border:"1px solid #e2e8f0",
+            borderRadius:12, overflow:"hidden" }}>
+            <button
+              onClick={() => setMostrarRegistros(v => !v)}
+              style={{ width:"100%", display:"flex", alignItems:"center", justifyContent:"space-between",
+                padding:"12px 16px", background:"#f8fafc", border:"none", cursor:"pointer",
+                textAlign:"left" }}>
+              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                <span style={{ fontSize:13, fontWeight:700, color:"#0f172a" }}>📱 Registros do app</span>
+                {registrosApp.length > 0 && (
+                  <span style={{ fontSize:11, fontWeight:700, color:"#7c3aed", background:"#f3e8ff",
+                    border:"1px solid #ddd6fe", borderRadius:20, padding:"1px 8px" }}>
+                    {registrosApp.length} {registrosApp.length === 1 ? "registro" : "registros"}
+                  </span>
+                )}
+              </div>
+              <span style={{ fontSize:12, color:"#94a3b8" }}>{mostrarRegistros ? "▲" : "▼"}</span>
+            </button>
+
+            {mostrarRegistros && (
+              <div style={{ padding:"12px 16px" }}>
+                {/* Humor dos últimos 14 dias */}
+                {humorApp.length > 0 && (
+                  <div style={{ marginBottom:16 }}>
+                    <div style={{ fontSize:11, fontWeight:700, color:"#94a3b8", textTransform:"uppercase",
+                      letterSpacing:"0.07em", marginBottom:10 }}>Humor (últimos 14 dias)</div>
+                    <div style={{ display:"flex", gap:4, alignItems:"flex-end", flexWrap:"wrap" }}>
+                      {humorApp.map(h => {
+                        const cor = h.valor >= 7 ? "#10b981" : h.valor >= 5 ? "#f59e0b" : "#ef4444";
+                        return (
+                          <div key={h.data} title={`${h.data}: ${h.valor}/10`}
+                            style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:2 }}>
+                            <div style={{ width:20, background:cor, borderRadius:3,
+                              height: Math.max(4, h.valor * 5) }} />
+                            <div style={{ fontSize:9, color:"#94a3b8" }}>
+                              {new Date(h.data + "T12:00:00").toLocaleDateString("pt-BR", { day:"2-digit", month:"2-digit" })}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Registros ABCD */}
+                {registrosApp.length === 0 && humorApp.length === 0 && (
+                  <div style={{ textAlign:"center", padding:"20px 0", color:"#94a3b8", fontSize:13 }}>
+                    Nenhum registro enviado pelo paciente ainda.
+                  </div>
+                )}
+                {registrosApp.length > 0 && (
+                  <div>
+                    <div style={{ fontSize:11, fontWeight:700, color:"#94a3b8", textTransform:"uppercase",
+                      letterSpacing:"0.07em", marginBottom:10 }}>Registros ABCD</div>
+                    {registrosApp.slice(0, 5).map(r => (
+                      <div key={r.id} style={{ border:"1px solid #f1f5f9", borderRadius:10,
+                        padding:"10px 14px", marginBottom:8, background:"#fff" }}>
+                        <div style={{ display:"flex", justifyContent:"space-between",
+                          alignItems:"center", marginBottom:6 }}>
+                          <span style={{ fontSize:12, fontWeight:700, color:"#0f172a" }}>
+                            {r.situacao ? r.situacao.slice(0, 60) + (r.situacao.length > 60 ? "…" : "") : "Registro sem situação"}
+                          </span>
+                          <span style={{ fontSize:10, color:"#94a3b8", flexShrink:0, marginLeft:8 }}>
+                            {new Date(r.criado_em).toLocaleDateString("pt-BR")}
+                          </span>
+                        </div>
+                        {r.pensamento && (
+                          <div style={{ fontSize:11, color:"#475569", marginBottom:3 }}>
+                            <span style={{ fontWeight:600, color:"#94a3b8" }}>Pensamento: </span>{r.pensamento.slice(0,80)}{r.pensamento.length > 80 ? "…" : ""}
+                          </div>
+                        )}
+                        {(r.intensidade_antes != null || r.intensidade_depois != null) && (
+                          <div style={{ display:"flex", gap:12, marginTop:6 }}>
+                            {r.intensidade_antes != null && (
+                              <span style={{ fontSize:11, color:"#64748b" }}>
+                                Antes: <strong>{r.intensidade_antes}%</strong>
+                              </span>
+                            )}
+                            {r.intensidade_depois != null && (
+                              <span style={{ fontSize:11, color: r.intensidade_depois < r.intensidade_antes ? "#15803d" : "#dc2626" }}>
+                                Depois: <strong>{r.intensidade_depois}%</strong>
+                                {r.intensidade_depois < r.intensidade_antes
+                                  ? ` (↓${r.intensidade_antes - r.intensidade_depois}pts)`
+                                  : ` (↑${r.intensidade_depois - r.intensidade_antes}pts)`}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                    {registrosApp.length > 5 && (
+                      <div style={{ fontSize:12, color:"#94a3b8", textAlign:"center", marginTop:4 }}>
+                        +{registrosApp.length - 5} registros mais antigos
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -1262,7 +1450,7 @@ const normalizeAIPlano = (ai, paciente) => {
 };
 
 // ─── TELA: PLANO DA SESSÃO ──────────────────────────────────────────────────────
-const TelaPlano = ({ paciente, isMobile = false, terapeutaId }) => {
+const TelaPlano = ({ paciente, isMobile = false, terapeutaId, onAgendar, proximaSessao }) => {
   const planoMock = PLANOS_GERADOS[paciente.id];
   const labels = LABELS_POR_LINHA[paciente.linha || "tcc"];
 
@@ -1282,6 +1470,9 @@ const TelaPlano = ({ paciente, isMobile = false, terapeutaId }) => {
   const [moldeAberto, setMoldeAberto] = useState(null);
   const [moldesDados, setMoldesDados] = useState({});
   const [moldesCustom, setMoldesCustom] = useState({});
+  const [enviandoTarefa, setEnviandoTarefa] = useState(false);
+  const [tarefaEnviada, setTarefaEnviada] = useState(null); // null | { id, descricao }
+  const [erroEnvioTarefa, setErroEnvioTarefa] = useState("");
 
   const plano = planoMock ?? planoCurrent;
 
@@ -1295,6 +1486,8 @@ const TelaPlano = ({ paciente, isMobile = false, terapeutaId }) => {
     setTarefaEditada(false);
     setObsEditada(false);
     setMoldeAberto(null);
+    setTarefaEnviada(null);
+    setErroEnvioTarefa("");
   }, [paciente.id]);
 
   // carrega plano salvo do Supabase ao abrir (só para pacientes reais sem mock)
@@ -1929,16 +2122,111 @@ const TelaPlano = ({ paciente, isMobile = false, terapeutaId }) => {
         )}
       </div>
 
-      {/* Teaser fase 2 */}
-      <div style={{ background:"#f5f3ff", border:"1px dashed #c4b5fd", borderRadius:12,
+      {/* Agendar próxima sessão — só aparece se não há sessão agendada */}
+      {onAgendar && proximaSessao && proximaSessao !== "Não agendado" && (
+        <div style={{ background:"#f0fdf4", border:"1px solid #bbf7d0", borderRadius:12,
+          padding:"12px 16px", marginBottom:12, display:"flex", alignItems:"center", gap:10 }}>
+          <span style={{ fontSize:18 }}>✅</span>
+          <div>
+            <div style={{ fontSize:12, fontWeight:700, color:"#166534" }}>Próxima sessão agendada</div>
+            <div style={{ fontSize:11, color:"#15803d" }}>{proximaSessao}</div>
+          </div>
+          <button onClick={() => onAgendar()}
+            style={{ marginLeft:"auto", padding:"5px 12px", background:"#fff", color:"#16a34a",
+              border:"1px solid #86efac", borderRadius:8, fontSize:11, fontWeight:700, cursor:"pointer" }}>
+            Alterar
+          </button>
+        </div>
+      )}
+      {onAgendar && (!proximaSessao || proximaSessao === "Não agendado") && (
+        <div style={{ background:"#f0fdf4", border:"1px solid #bbf7d0", borderRadius:12,
+          padding:"16px 20px", marginBottom:12, display:"flex", alignItems:"center",
+          justifyContent:"space-between", gap:12 }}>
+          <div>
+            <div style={{ fontSize:13, fontWeight:700, color:"#166534", marginBottom:2 }}>
+              Agendar próxima sessão
+            </div>
+            <div style={{ fontSize:11, color:"#15803d" }}>
+              Data, horário e recorrência para {paciente.nome.split(" ")[0]}
+            </div>
+          </div>
+          <button onClick={() => onAgendar()}
+            style={{ padding:"8px 18px", background:"#16a34a", color:"#fff",
+              border:"none", borderRadius:10, fontSize:12, fontWeight:700,
+              cursor:"pointer", flexShrink:0 }}>
+            📅 Agendar
+          </button>
+        </div>
+      )}
+
+      {/* Enviar tarefa para o app do paciente */}
+      <div style={{ background:"#f5f3ff", border:"1px solid #c4b5fd", borderRadius:12,
         padding:"16px 20px", marginBottom:12 }}>
         <div style={{ fontSize:11, fontWeight:700, color:"#7c3aed", textTransform:"uppercase",
-          letterSpacing:"0.07em", marginBottom:6 }}>🔜 Em breve — App do paciente</div>
-        <div style={{ fontSize:12, color:"#6d28d9" }}>
-          Envie esta tarefa diretamente para o app de {paciente.nome.split(" ")[0]}.
-          Ela receberá notificações de lembrete e poderá registrar o cumprimento em tempo real.
-          <span style={{ fontWeight:700 }}> (Fase 2 — lista de espera aberta)</span>
-        </div>
+          letterSpacing:"0.07em", marginBottom:10 }}>📱 App do paciente</div>
+        {tarefaEnviada ? (
+          <div style={{ display:"flex", alignItems:"flex-start", gap:10 }}>
+            <div style={{ flex:1 }}>
+              <div style={{ fontSize:13, fontWeight:700, color:"#15803d", marginBottom:3 }}>
+                ✅ Tarefa enviada para {paciente.nome.split(" ")[0]}
+              </div>
+              <div style={{ fontSize:12, color:"#166534", lineHeight:1.5 }}>
+                {tarefaEnviada.descricao}
+              </div>
+            </div>
+            <button onClick={() => setTarefaEnviada(null)}
+              style={{ fontSize:11, color:"#7c3aed", background:"none", border:"none",
+                cursor:"pointer", textDecoration:"underline", flexShrink:0 }}>
+              Reenviar
+            </button>
+          </div>
+        ) : (
+          <div>
+            <div style={{ fontSize:12, color:"#6d28d9", marginBottom:12, lineHeight:1.5 }}>
+              Envie a tarefa de casa para {paciente.nome.split(" ")[0]} acompanhar no app.
+              O paciente poderá registrar o cumprimento e você receberá os relatórios aqui.
+            </div>
+            {erroEnvioTarefa && (
+              <div style={{ fontSize:12, color:"#dc2626", background:"#fff1f2",
+                border:"1px solid #fecdd3", borderRadius:8, padding:"8px 12px", marginBottom:10 }}>
+                {erroEnvioTarefa}
+              </div>
+            )}
+            <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+              <div style={{ fontSize:12, color:"#4c1d95", background:"#ede9fe",
+                border:"1px solid #c4b5fd", borderRadius:8, padding:"7px 12px", flex:1,
+                minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                {tarefaCustom || plano?.tarefa || "Nenhuma tarefa definida"}
+              </div>
+              <button
+                disabled={enviandoTarefa || !plano || !(tarefaCustom || plano?.tarefa)}
+                onClick={async () => {
+                  const desc = tarefaCustom || plano?.tarefa;
+                  if (!desc) return;
+                  setEnviandoTarefa(true);
+                  setErroEnvioTarefa("");
+                  const { data, error } = await criarTarefa({
+                    paciente_id: paciente.id,
+                    terapeuta_id: terapeutaId,
+                    sessao_id: null,
+                    descricao: desc,
+                    tipo_formulario: "abcd",
+                  });
+                  setEnviandoTarefa(false);
+                  if (error) {
+                    setErroEnvioTarefa("Erro ao enviar: " + (error.message || "tente novamente"));
+                  } else {
+                    setTarefaEnviada({ id: data?.id, descricao: desc });
+                  }
+                }}
+                style={{ padding:"8px 16px", background: enviandoTarefa ? "#a5b4fc" : "#6d28d9",
+                  color:"#fff", border:"none", borderRadius:8, fontSize:12, fontWeight:700,
+                  cursor: enviandoTarefa ? "default" : "pointer", flexShrink:0, whiteSpace:"nowrap" }}>
+                {enviandoTarefa ? "Enviando…" : "📤 Enviar tarefa"}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Stub personalização adaptativa */}
@@ -1959,16 +2247,28 @@ const TelaPlano = ({ paciente, isMobile = false, terapeutaId }) => {
 };
 
 // ─── TELA: IMPORTAR RELATÓRIO ──────────────────────────────────────────────────
-const TelaImportar = ({ paciente, isMobile = false, terapeutaId, onSessaoSalva }) => {
-  const [fase, setFase] = useState("upload"); // upload | processando | revisao | salvando
+const TelaImportar = ({ paciente, isMobile = false, terapeutaId, onSessaoSalva, agendamentos = [], onAgendamentoRealizado }) => {
+  const [fase, setFase] = useState("upload"); // upload | processando | revisao
   const [drag, setDrag] = useState(false);
   const [textoManual, setTextoManual] = useState("");
   const [extraido, setExtraido] = useState(null);
   const [provider, setProvider] = useState(null);
   const [erroIA, setErroIA] = useState("");
   const [salvando, setSalvando] = useState(false);
+  const [agendamentoVinculadoId, setAgendamentoVinculadoId] = useState(null);
   const fileInputRef = useRef(null);
   const cfg = CAMPOS_POR_LINHA[paciente.linha || "tcc"];
+
+  // Agendamentos recentes deste paciente (últimos 30 dias + próximas 4h), não cancelados/realizados
+  const agendamentosVinculaveis = agendamentos.filter(a => {
+    if (String(a.paciente_id) !== String(paciente.id)) return false;
+    if (a.status === "cancelado" || a.status === "realizado") return false;
+    const ini = new Date(a.inicio);
+    const agora = new Date();
+    const ha30dias = new Date(agora.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const em4h = new Date(agora.getTime() + 4 * 60 * 60 * 1000);
+    return ini >= ha30dias && ini <= em4h;
+  }).sort((a, b) => new Date(b.inicio) - new Date(a.inicio));
 
   const processarTexto = async (texto) => {
     if (!texto.trim()) { setErroIA("Cole ou carregue algum texto antes de continuar."); return; }
@@ -2001,10 +2301,13 @@ const TelaImportar = ({ paciente, isMobile = false, terapeutaId, onSessaoSalva }
     if (!extraido) return;
     setSalvando(true);
     const proximoNumero = (paciente.sessoes || 0) + 1;
-    const hoje = new Date().toLocaleDateString("pt-BR", { day: "2-digit", month: "short", year: "numeric" });
+    const dataStr = agendamentoVinculadoId
+      ? new Date(agendamentosVinculaveis.find(a => a.id === agendamentoVinculadoId)?.inicio || Date.now())
+          .toLocaleDateString("pt-BR", { day:"2-digit", month:"short", year:"numeric" })
+      : new Date().toLocaleDateString("pt-BR", { day:"2-digit", month:"short", year:"numeric" });
     const novaSessao = {
       numero: proximoNumero,
-      data: hoje,
+      data: dataStr,
       temas: extraido.temas || [],
       emocoes: extraido.emocoes || [],
       pensamentos: [],
@@ -2018,13 +2321,12 @@ const TelaImportar = ({ paciente, isMobile = false, terapeutaId, onSessaoSalva }
       humor_inicio: extraido.humor_inicio,
       humor_fim: extraido.humor_fim,
     };
-    // só persiste no Supabase quando o paciente for real (UUID string, não mock numérico)
     const pacienteReal = terapeutaId && terapeutaId !== "demo" && typeof paciente.id === "string";
     try {
       if (pacienteReal) {
         await criarSessao(terapeutaId, paciente.id, {
           numero: proximoNumero,
-          data: hoje,
+          data: dataStr,
           resumo: extraido.resumo,
           temas: extraido.temas,
           distorcoes: extraido.distorcoes,
@@ -2036,8 +2338,13 @@ const TelaImportar = ({ paciente, isMobile = false, terapeutaId, onSessaoSalva }
           humor_inicio: extraido.humor_inicio,
           humor_fim: extraido.humor_fim,
           notas_raw: textoManual,
+          ...(agendamentoVinculadoId ? { agendamento_id: agendamentoVinculadoId } : {}),
         });
         await atualizarPaciente(paciente.id, { sessoes: proximoNumero });
+        if (agendamentoVinculadoId) {
+          await atualizarAgendamento(agendamentoVinculadoId, { status: "realizado" });
+          onAgendamentoRealizado?.(agendamentoVinculadoId);
+        }
       }
     } finally {
       setSalvando(false);
@@ -2224,8 +2531,76 @@ const TelaImportar = ({ paciente, isMobile = false, terapeutaId, onSessaoSalva }
         </div>
       )}
 
-      <div style={{ marginTop:20, display:"flex", gap:10 }}>
-        <button onClick={() => { setFase("upload"); setExtraido(null); setErroIA(""); }}
+      {/* ─── Vínculo com agendamento ─── */}
+      <div style={{ marginTop:20, background:"#f8fafc", border:"1px solid #e2e8f0",
+        borderRadius:12, padding:"16px 18px" }}>
+        <div style={{ fontSize:11, fontWeight:700, color:"#64748b", textTransform:"uppercase",
+          letterSpacing:"0.07em", marginBottom:10 }}>
+          📅 Vincular a sessão agendada
+        </div>
+        {agendamentosVinculaveis.length === 0 ? (
+          <div style={{ fontSize:12, color:"#94a3b8", fontStyle:"italic" }}>
+            Nenhum agendamento recente encontrado para {paciente.nome.split(" ")[0]}. A sessão será salva sem vínculo.
+          </div>
+        ) : (
+          <>
+            <div style={{ fontSize:12, color:"#64748b", marginBottom:10 }}>
+              Selecione o agendamento correspondente a esta sessão:
+            </div>
+            <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+              {/* Opção "sem vínculo" */}
+              <div onClick={() => setAgendamentoVinculadoId(null)}
+                style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 12px",
+                  borderRadius:8, cursor:"pointer",
+                  border: agendamentoVinculadoId === null ? "1.5px solid #6366f1" : "1.5px solid #e2e8f0",
+                  background: agendamentoVinculadoId === null ? "#ede9fe" : "#fff" }}>
+                <div style={{ width:14, height:14, borderRadius:"50%", border:"2px solid",
+                  borderColor: agendamentoVinculadoId === null ? "#6366f1" : "#cbd5e1",
+                  background: agendamentoVinculadoId === null ? "#6366f1" : "transparent",
+                  flexShrink:0 }} />
+                <span style={{ fontSize:12, color:"#64748b", fontStyle:"italic" }}>
+                  Sem vínculo
+                </span>
+              </div>
+              {agendamentosVinculaveis.map(a => {
+                const sel = agendamentoVinculadoId === a.id;
+                const d = new Date(a.inicio);
+                const label = d.toLocaleDateString("pt-BR", { weekday:"short", day:"numeric", month:"short" });
+                const hora = d.toLocaleTimeString("pt-BR", { hour:"2-digit", minute:"2-digit" });
+                return (
+                  <div key={a.id} onClick={() => setAgendamentoVinculadoId(a.id)}
+                    style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 12px",
+                      borderRadius:8, cursor:"pointer",
+                      border: sel ? "1.5px solid #6366f1" : "1.5px solid #e2e8f0",
+                      background: sel ? "#ede9fe" : "#fff" }}>
+                    <div style={{ width:14, height:14, borderRadius:"50%", border:"2px solid",
+                      borderColor: sel ? "#6366f1" : "#cbd5e1",
+                      background: sel ? "#6366f1" : "transparent",
+                      flexShrink:0 }} />
+                    <div style={{ flex:1 }}>
+                      <span style={{ fontSize:13, fontWeight:700, color: sel ? "#4f46e5" : "#0f172a" }}>
+                        {label} · {hora}
+                      </span>
+                      <span style={{ fontSize:11, color:"#94a3b8", marginLeft:8 }}>
+                        {_CAL_TIPO_LABEL[a.tipo] ?? a.tipo}
+                      </span>
+                    </div>
+                    {sel && <span style={{ fontSize:11, color:"#6366f1", fontWeight:700 }}>✓</span>}
+                  </div>
+                );
+              })}
+            </div>
+            {agendamentoVinculadoId && (
+              <div style={{ marginTop:8, fontSize:11, color:"#10b981", fontWeight:600 }}>
+                ✓ Ao salvar, o agendamento será marcado como realizado no calendário.
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      <div style={{ marginTop:16, display:"flex", gap:10 }}>
+        <button onClick={() => { setFase("upload"); setExtraido(null); setErroIA(""); setAgendamentoVinculadoId(null); }}
           style={{ padding:"10px 20px", background:"#f1f5f9",
             color:"#475569", border:"none", borderRadius:8, fontSize:13,
             fontWeight:700, cursor:"pointer" }}>
@@ -2242,13 +2617,106 @@ const TelaImportar = ({ paciente, isMobile = false, terapeutaId, onSessaoSalva }
   );
 };
 
+// ─── COMPONENTES AUXILIARES DE FORMULÁRIO (fora do TelaPerfil p/ evitar remount) ─
+const PerfilSecao = ({ titulo }) => (
+  <div style={{ gridColumn: "1/-1", paddingBottom: 8, marginBottom: 4, marginTop: 8,
+    borderBottom: "1px solid #f1f5f9", fontSize: 11, fontWeight: 700,
+    color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+    {titulo}
+  </div>
+);
+
+const PerfilCampo = ({ label, children }) => (
+  <div style={{ marginBottom: 14 }}>
+    <div style={{ fontSize: 11, fontWeight: 600, color: "#94a3b8", marginBottom: 5 }}>{label}</div>
+    {children}
+  </div>
+);
+
 // ─── TELA: PERFIL DO PACIENTE ─────────────────────────────────────────────────
-const TelaPerfil = ({ paciente, isMobile = false, onAtualizar, onExcluir }) => {
+const TelaPerfil = ({ paciente, isMobile = false, onAtualizar, onExcluir, terapeutaId, terapeutaNome, terapeutaEmail }) => {
   const [editando, setEditando] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [confirmandoExcluir, setConfirmandoExcluir] = useState(false);
   const [excluirHistorico, setExcluirHistorico] = useState(true);
   const [excluindo, setExcluindo] = useState(false);
+
+  // App do paciente
+  const [convites, setConvites] = useState([]);
+  const [carregandoConvites, setCarregandoConvites] = useState(false);
+  const [gerandoConvite, setGerandoConvite] = useState(false);
+  const [emailConvite, setEmailConvite] = useState(paciente.email || "");
+  const [linkCopiado, setLinkCopiado] = useState(false);
+  const [erroConvite, setErroConvite] = useState("");
+
+  useEffect(() => {
+    if (!paciente?.id || typeof paciente.id !== "string") return;
+    setCarregandoConvites(true);
+    listarConvitesPaciente(paciente.id).then(({ data }) => {
+      setConvites(data ?? []);
+      setCarregandoConvites(false);
+    });
+  }, [paciente.id]);
+
+  const conviteAtivo = convites.find(c => c.status === "usado") ?? convites.find(c => c.status === "pendente");
+
+  const handleGerarConvite = async () => {
+    const emailParaUsar = paciente.email?.trim() || emailConvite.trim();
+    if (!emailParaUsar) {
+      setErroConvite("Informe o e-mail do paciente para gerar o convite.");
+      return;
+    }
+    setGerandoConvite(true);
+    setErroConvite("");
+    const { data, error } = await criarConvite(paciente.id, terapeutaId, emailParaUsar);
+    setGerandoConvite(false);
+    if (error) {
+      setErroConvite("Erro ao gerar convite: " + (error.message || "tente novamente"));
+    } else {
+      setConvites(prev => [data, ...prev]);
+    }
+  };
+
+  const abrirEmailConvite = (token) => {
+    const link = gerarLinkConvite(token);
+    const nomeProf = terapeutaNome || terapeutaEmail || "seu terapeuta";
+    const nomePac = paciente.nome.split(" ")[0];
+    const emailDestino = paciente.email?.trim() || emailConvite.trim();
+    const assunto = encodeURIComponent("Convite para acompanhamento terapêutico");
+    const corpo = encodeURIComponent(
+`Olá, ${nomePac}!
+
+Você está recebendo este convite de ${nomeProf} para acessar o app de acompanhamento terapêutico.
+
+O app permite que você:
+• Acompanhe as tarefas de casa definidas nas sessões
+• Registre seus pensamentos e emoções com o formulário ABCD
+• Registre seu humor diário
+
+Para começar, acesse o link abaixo e crie sua conta:
+
+${link}
+
+Este link é pessoal e intransferível. Caso tenha dúvidas, entre em contato diretamente com ${nomeProf}.
+
+Atenciosamente,
+${nomeProf}`
+    );
+    window.open(`mailto:${emailDestino}?subject=${assunto}&body=${corpo}`, "_blank");
+  };
+
+  const handleRevogar = async (id) => {
+    if (!window.confirm("Revogar este convite?")) return;
+    await revogarConvite(id);
+    setConvites(prev => prev.map(c => c.id === id ? { ...c, status: "revogado" } : c));
+  };
+
+  const copiarLink = (token) => {
+    navigator.clipboard.writeText(gerarLinkConvite(token)).then(() => {
+      setLinkCopiado(true);
+      setTimeout(() => setLinkCopiado(false), 2000);
+    });
+  };
 
   const inicialForm = (p) => ({
     nome: p.nome || "",
@@ -2272,6 +2740,9 @@ const TelaPerfil = ({ paciente, isMobile = false, onAtualizar, onExcluir }) => {
     setForm(inicialForm(paciente));
     setEditando(false);
     setConfirmandoExcluir(false);
+    setEmailConvite(paciente.email || "");
+    setConvites([]);
+    setErroConvite("");
   }, [paciente.id]);
 
   const campo = (key) => (e) => setForm(prev => ({ ...prev, [key]: e.target.value }));
@@ -2303,20 +2774,8 @@ const TelaPerfil = ({ paciente, isMobile = false, onAtualizar, onExcluir }) => {
     outline: "none", boxSizing: "border-box", fontFamily: "inherit",
   });
 
-  const Secao = ({ titulo }) => (
-    <div style={{ gridColumn: "1/-1", paddingBottom: 8, marginBottom: 4, marginTop: 8,
-      borderBottom: "1px solid #f1f5f9", fontSize: 11, fontWeight: 700,
-      color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.08em" }}>
-      {titulo}
-    </div>
-  );
-
-  const Campo = ({ label, children }) => (
-    <div style={{ marginBottom: 14 }}>
-      <div style={{ fontSize: 11, fontWeight: 600, color: "#94a3b8", marginBottom: 5 }}>{label}</div>
-      {children}
-    </div>
-  );
+  const Secao = PerfilSecao;
+  const Campo = PerfilCampo;
 
   return (
     <div style={{ height: "100%", overflowY: "auto", padding: isMobile ? "16px" : "20px 28px" }}>
@@ -2464,6 +2923,126 @@ const TelaPerfil = ({ paciente, isMobile = false, onAtualizar, onExcluir }) => {
           </div>
         ))}
       </div>
+
+      {/* App do paciente */}
+      {!editando && (
+        <div style={{ border: "1px solid #c4b5fd", borderRadius: 12,
+          padding: "16px 20px", marginBottom: 20, background: "#faf5ff" }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#7c3aed",
+            textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 12 }}>
+            📱 App do paciente
+          </div>
+
+          {carregandoConvites ? (
+            <div style={{ fontSize: 12, color: "#94a3b8" }}>Carregando…</div>
+          ) : conviteAtivo ? (
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                <span style={{
+                  fontSize: 11, fontWeight: 700, padding: "2px 10px", borderRadius: 20,
+                  background: conviteAtivo.status === "usado" ? "#f0fdf4" : "#fff7ed",
+                  color: conviteAtivo.status === "usado" ? "#166534" : "#92400e",
+                  border: `1px solid ${conviteAtivo.status === "usado" ? "#86efac" : "#fed7aa"}`,
+                }}>
+                  {conviteAtivo.status === "usado" ? "✅ Conectado" : "⏳ Aguardando cadastro"}
+                </span>
+                {conviteAtivo.email_paciente && (
+                  <span style={{ fontSize: 12, color: "#64748b" }}>{conviteAtivo.email_paciente}</span>
+                )}
+              </div>
+              {conviteAtivo.status !== "usado" && (
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
+                  <div style={{ fontSize: 11, color: "#6d28d9", background: "#ede9fe",
+                    border: "1px solid #c4b5fd", borderRadius: 8, padding: "6px 10px",
+                    flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {gerarLinkConvite(conviteAtivo.token)}
+                  </div>
+                  <button onClick={() => copiarLink(conviteAtivo.token)}
+                    style={{ padding: "6px 14px", background: linkCopiado ? "#f0fdf4" : "#7c3aed",
+                      color: linkCopiado ? "#166534" : "#fff", border: "none",
+                      borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}>
+                    {linkCopiado ? "✓ Copiado" : "Copiar link"}
+                  </button>
+                </div>
+              )}
+              {conviteAtivo.status !== "usado" && conviteAtivo.email_paciente && (
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button onClick={() => abrirEmailConvite(conviteAtivo.token)}
+                    style={{ padding: "7px 14px", background: "#7c3aed", color: "#fff",
+                      border: "none", borderRadius: 8, fontSize: 12, fontWeight: 700,
+                      cursor: "pointer" }}>
+                    📧 Enviar por e-mail
+                  </button>
+                  <button onClick={() => handleRevogar(conviteAtivo.id)}
+                    style={{ padding: "7px 12px", background: "none", color: "#94a3b8",
+                      border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 12,
+                      fontWeight: 600, cursor: "pointer" }}>
+                    Revogar
+                  </button>
+                </div>
+              )}
+              {conviteAtivo.status === "usado" && (
+                <div style={{ fontSize: 12, color: "#15803d" }}>
+                  {paciente.nome.split(" ")[0]} já está usando o app e pode receber tarefas.
+                </div>
+              )}
+            </div>
+          ) : (
+            <div>
+              <div style={{ fontSize: 12, color: "#6d28d9", marginBottom: 12, lineHeight: 1.5 }}>
+                Convide {paciente.nome.split(" ")[0]} para acompanhar o tratamento no app.
+                {!paciente.email && (
+                  <span style={{ color: "#92400e" }}> Informe o e-mail abaixo ou cadastre-o no perfil.</span>
+                )}
+              </div>
+              {erroConvite && (
+                <div style={{ fontSize: 12, color: "#dc2626", background: "#fff1f2",
+                  border: "1px solid #fecdd3", borderRadius: 8, padding: "7px 10px", marginBottom: 10 }}>
+                  {erroConvite}
+                </div>
+              )}
+              {paciente.email ? (
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <div style={{ flex: 1, padding: "8px 12px", fontSize: 12, color: "#6d28d9",
+                    background: "#ede9fe", border: "1px solid #c4b5fd", borderRadius: 8 }}>
+                    {paciente.email}
+                  </div>
+                  <button onClick={handleGerarConvite} disabled={gerandoConvite}
+                    style={{ padding: "8px 16px", background: gerandoConvite ? "#a5b4fc" : "#7c3aed",
+                      color: "#fff", border: "none", borderRadius: 8, fontSize: 12,
+                      fontWeight: 700, cursor: gerandoConvite ? "default" : "pointer", flexShrink: 0 }}>
+                    {gerandoConvite ? "Gerando…" : "Gerar convite"}
+                  </button>
+                </div>
+              ) : (
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <input
+                    type="email"
+                    value={emailConvite}
+                    onChange={e => setEmailConvite(e.target.value)}
+                    placeholder="E-mail do paciente (obrigatório)"
+                    style={{ flex: 1, minWidth: 160, padding: "8px 12px", fontSize: 12,
+                      border: `1.5px solid ${erroConvite ? "#fca5a5" : "#c4b5fd"}`,
+                      borderRadius: 8, outline: "none",
+                      fontFamily: "inherit", color: "#0f172a" }}
+                  />
+                  <button onClick={handleGerarConvite} disabled={gerandoConvite}
+                    style={{ padding: "8px 16px", background: gerandoConvite ? "#a5b4fc" : "#7c3aed",
+                      color: "#fff", border: "none", borderRadius: 8, fontSize: 12,
+                      fontWeight: 700, cursor: gerandoConvite ? "default" : "pointer", flexShrink: 0 }}>
+                    {gerandoConvite ? "Gerando…" : "Gerar convite"}
+                  </button>
+                </div>
+              )}
+              {paciente.email && (
+                <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 6 }}>
+                  Para alterar o e-mail, edite o cadastro do paciente.
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Zona de perigo */}
       {!editando && (
@@ -3030,20 +3609,786 @@ const TelaInsights = ({ paciente, analise }) => {
   );
 };
 
-// ─── TELA: CALENDÁRIO SEMANAL (implementação na Etapa 3) ─────────────────────────
-// Placeholder: será substituído pelo componente completo
-const TelaCalendario = ({ agendamentos, setAgendamentos, pacientes, terapeutaId, onIrParaCopiloto }) => (
-  <div style={{ display:"flex", flexDirection:"column", alignItems:"center",
-    justifyContent:"center", height:"100%", gap:12, color:"#94a3b8" }}>
-    <div style={{ fontSize:48 }}>📆</div>
-    <div style={{ fontSize:16, fontWeight:700, color:"#64748b" }}>Calendário semanal</div>
-    <div style={{ fontSize:13 }}>
-      {agendamentos.length > 0
-        ? `${agendamentos.length} agendamento(s) carregado(s) — calendário será implementado na Etapa 3`
-        : "Nenhum agendamento encontrado para a semana atual"}
+// ─── HELPERS: AGENDAMENTOS ────────────────────────────────────────────────────────
+const _proxAgendDe = (pacienteId, agends) => {
+  const agora = new Date();
+  return agends
+    .filter(a => String(a.paciente_id) === String(pacienteId) && a.status !== "cancelado" && new Date(a.inicio) >= agora)
+    .sort((a, b) => new Date(a.inicio) - new Date(b.inicio))[0] ?? null;
+};
+
+const _labelAgend = (agend) => {
+  if (!agend) return "Não agendado";
+  const d = new Date(agend.inicio);
+  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+  const amanha = new Date(hoje); amanha.setDate(hoje.getDate() + 1);
+  const dia = new Date(d); dia.setHours(0, 0, 0, 0);
+  const hora = d.toLocaleTimeString("pt-BR", { hour:"2-digit", minute:"2-digit" });
+  if (dia.getTime() === hoje.getTime()) return `Hoje, ${hora}`;
+  if (dia.getTime() === amanha.getTime()) return `Amanhã, ${hora}`;
+  return `${d.toLocaleDateString("pt-BR", { weekday:"short", day:"numeric", month:"short" })}, ${hora}`;
+};
+
+// ─── COMPONENTE: AGENDA HOJE/AMANHÃ ──────────────────────────────────────────────
+const AgendaHojeList = ({ agendamentos, pacientes, onSelect, onNovoAgendamento }) => {
+  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+  const amanha = new Date(hoje); amanha.setDate(hoje.getDate() + 1);
+
+  const doDia = (dia) => agendamentos
+    .filter(a => {
+      const d = new Date(a.inicio); d.setHours(0, 0, 0, 0);
+      return d.getTime() === dia.getTime() && a.status !== "cancelado";
+    })
+    .sort((a, b) => new Date(a.inicio) - new Date(b.inicio));
+
+  const agendHoje = doDia(hoje);
+  const agendAmanha = doDia(amanha);
+
+  const renderItem = (a) => {
+    const p = pacientes.find(px => String(px.id) === String(a.paciente_id));
+    const hora = new Date(a.inicio).toLocaleTimeString("pt-BR", { hour:"2-digit", minute:"2-digit" });
+    return (
+      <div key={a.id} onClick={() => p && onSelect(p)}
+        style={{ display:"flex", alignItems:"center", gap:8, padding:"7px 14px",
+          cursor: p ? "pointer" : "default", borderBottom:"1px solid #f8fafc",
+          transition:"background 0.1s" }}
+        onMouseEnter={e => e.currentTarget.style.background = "#f5f3ff"}
+        onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+        <Avatar iniciais={p?.iniciais ?? "?"} cor={p?.cor ?? "#94a3b8"} tamanho={26} />
+        <div style={{ flex:1, minWidth:0 }}>
+          <div style={{ fontSize:12, fontWeight:700, color:"#0f172a",
+            overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+            {p?.nome ?? a.paciente_nome ?? "Sem paciente"}
+          </div>
+          <div style={{ fontSize:10, color:"#6366f1", fontWeight:600 }}>
+            {hora} · {_CAL_TIPO_LABEL?.[a.tipo] ?? a.tipo}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  if (agendHoje.length === 0 && agendAmanha.length === 0) {
+    return (
+      <div style={{ padding:"20px 16px", textAlign:"center" }}>
+        <div style={{ fontSize:24, marginBottom:6 }}>📭</div>
+        <div style={{ fontSize:12, color:"#94a3b8", marginBottom:12 }}>
+          Sem sessões hoje ou amanhã
+        </div>
+        {onNovoAgendamento && (
+          <button onClick={() => onNovoAgendamento(null)}
+            style={{ padding:"6px 14px", background:"#6366f1", color:"#fff",
+              border:"none", borderRadius:8, fontSize:11, fontWeight:700, cursor:"pointer" }}>
+            + Novo agendamento
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {agendHoje.length > 0 && (
+        <>
+          <div style={{ padding:"4px 14px", fontSize:10, fontWeight:700, color:"#dc2626",
+            textTransform:"uppercase", letterSpacing:"0.07em", background:"#fff1f2",
+            borderBottom:"1px solid #fecdd3" }}>
+            Hoje · {agendHoje.length}
+          </div>
+          {agendHoje.map(renderItem)}
+        </>
+      )}
+      {agendAmanha.length > 0 && (
+        <>
+          <div style={{ padding:"4px 14px", fontSize:10, fontWeight:700, color:"#64748b",
+            textTransform:"uppercase", letterSpacing:"0.07em", background:"#f8fafc",
+            borderBottom:"1px solid #f1f5f9" }}>
+            Amanhã · {agendAmanha.length}
+          </div>
+          {agendAmanha.map(renderItem)}
+        </>
+      )}
     </div>
-  </div>
-);
+  );
+};
+
+// ─── MODAL: AGENDAMENTO ───────────────────────────────────────────────────────────
+const ModalAgendamento = ({ paciente, pacientes = [], terapeutaId, onSalvar, onFechar, dataInicial, horaInicioInicial, agendamentoExistente }) => {
+  const modoEdicao = !!agendamentoExistente;
+  const hoje = new Date().toISOString().slice(0, 10);
+
+  const _iniData = () => {
+    if (agendamentoExistente) return new Date(agendamentoExistente.inicio).toISOString().slice(0, 10);
+    return dataInicial || hoje;
+  };
+  const _iniHora = () => {
+    if (agendamentoExistente) {
+      const d = new Date(agendamentoExistente.inicio);
+      return `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+    }
+    return horaInicioInicial || "09:00";
+  };
+  const _iniDuracao = () => {
+    if (agendamentoExistente) return Math.round((new Date(agendamentoExistente.fim) - new Date(agendamentoExistente.inicio)) / 60000);
+    return 50;
+  };
+
+  const [data, setData] = useState(_iniData);
+  const [horaInicio, setHoraInicio] = useState(_iniHora);
+  const [duracao, setDuracao] = useState(_iniDuracao);
+  const [tipo, setTipo] = useState(agendamentoExistente?.tipo || "sessao");
+  const [notas, setNotas] = useState(agendamentoExistente?.notas || "");
+  const [salvando, setSalvando] = useState(false);
+  const [pacienteIdSel, setPacienteIdSel] = useState(paciente?.id ?? "");
+  const [recorrencia, setRecorrencia] = useState("nenhuma");
+  const [repeticoes, setRepeticoes] = useState(8);
+  const [erroModal, setErroModal] = useState(null);
+
+  const calcularFim = (hi, dur) => {
+    const [h, m] = hi.split(":").map(Number);
+    const totalMin = h * 60 + m + Number(dur);
+    return `${String(Math.floor(totalMin / 60)).padStart(2, "0")}:${String(totalMin % 60).padStart(2, "0")}`;
+  };
+
+  const horaFim = calcularFim(horaInicio, duracao);
+
+  const pacienteEfetivo = paciente ?? pacientes.find(p => String(p.id) === String(pacienteIdSel)) ?? null;
+
+  // UUID v4 válido: 8-4-4-4-12 hex chars
+  const isUUID = (id) => typeof id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+  const pacienteIdParaDB = isUUID(pacienteEfetivo?.id) ? pacienteEfetivo.id : null;
+
+  const offsets = recorrencia === "semanal"   ? Array.from({ length: repeticoes }, (_, i) => i * 7)
+                : recorrencia === "quinzenal" ? Array.from({ length: repeticoes }, (_, i) => i * 14)
+                : recorrencia === "mensal"    ? Array.from({ length: repeticoes }, (_, i) => i * 30)
+                : [0];
+
+  const salvar = async () => {
+    if (!data || !horaInicio) return;
+    setErroModal(null);
+
+    const ini = new Date(`${data}T${horaInicio}:00`);
+    const fim = new Date(`${data}T${horaFim}:00`);
+
+    // Modo edição — atualiza agendamento existente
+    if (modoEdicao) {
+      setSalvando(true);
+      const { data: atualizado, error } = await atualizarAgendamento(agendamentoExistente.id, {
+        inicio: ini.toISOString(), fim: fim.toISOString(), tipo, notas,
+      });
+      setSalvando(false);
+      if (error) { alert(`Erro ao salvar: ${error.message ?? JSON.stringify(error)}`); return; }
+      onSalvar([atualizado ?? { ...agendamentoExistente, inicio: ini.toISOString(), fim: fim.toISOString(), tipo, notas }]);
+      return;
+    }
+
+    // Modo criação
+    if (hasSupabase && pacienteEfetivo && !pacienteIdParaDB) {
+      setErroModal("Este paciente não possui ID válido no sistema. Tente recadastrá-lo ou entre em contato com o suporte.");
+      return;
+    }
+    if (hasSupabase && !pacienteEfetivo && !pacienteIdSel) {
+      setErroModal("Selecione um paciente para agendar a sessão.");
+      return;
+    }
+    setSalvando(true);
+    const baseInicio = ini;
+    const baseFim = fim;
+    const criados = [];
+    for (const offset of offsets) {
+      const iniOff = new Date(baseInicio); iniOff.setDate(iniOff.getDate() + offset);
+      const fimOff = new Date(baseFim);    fimOff.setDate(fimOff.getDate() + offset);
+      const { data: agend, error } = await criarAgendamento(terapeutaId, {
+        pacienteId: pacienteIdParaDB,
+        inicio: iniOff.toISOString(), fim: fimOff.toISOString(), tipo, notas,
+      });
+      if (error) { console.error("[ModalAgendamento] erro Supabase:", error); setSalvando(false); alert(`Erro ao criar agendamento: ${error.message ?? JSON.stringify(error)}`); return; }
+      criados.push(agend ?? {
+        id: `local-${Date.now()}-${offset}`,
+        paciente_id: pacienteIdParaDB,
+        paciente_nome: pacienteEfetivo?.nome ?? "",
+        paciente_iniciais: pacienteEfetivo?.iniciais ?? "",
+        terapeuta_id: terapeutaId,
+        inicio: iniOff.toISOString(), fim: fimOff.toISOString(), tipo, status: "agendado", notas,
+      });
+    }
+    setSalvando(false);
+    onSalvar(criados);
+  };
+
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.45)", zIndex:200,
+      display:"flex", alignItems:"center", justifyContent:"center" }}
+      onClick={e => e.target === e.currentTarget && onFechar()}>
+      <div style={{ background:"#fff", borderRadius:16, padding:"28px 28px 24px",
+        width:460, boxShadow:"0 20px 60px rgba(0,0,0,0.18)" }}>
+        <div style={{ fontSize:16, fontWeight:800, color:"#0f172a", marginBottom:16 }}>
+          {modoEdicao ? "✏️ Editar agendamento" : "📅 Agendar sessão"}
+        </div>
+
+        {/* Seletor de paciente — oculto no modo edição */}
+        {!modoEdicao && (
+          <>
+            <div style={{ marginBottom:14 }}>
+              <div style={{ fontSize:11, fontWeight:700, color:"#64748b", textTransform:"uppercase",
+                letterSpacing:"0.06em", marginBottom:5 }}>Paciente</div>
+              {paciente ? (
+                <div style={{ padding:"8px 12px", background:"#f8fafc", border:"1.5px solid #f1f5f9",
+                  borderRadius:8, fontSize:13, color:"#0f172a", fontWeight:600 }}>
+                  {paciente.nome}
+                </div>
+              ) : (
+                <select value={pacienteIdSel} onChange={e => { setPacienteIdSel(e.target.value); setErroModal(null); }}
+                  style={{ width:"100%", padding:"8px 12px", border:`1.5px solid ${erroModal ? "#ef4444" : "#e2e8f0"}`,
+                    borderRadius:8, fontSize:13, color:"#0f172a", outline:"none",
+                    background:"#fff", boxSizing:"border-box" }}>
+                  <option value="">— Sem paciente vinculado —</option>
+                  {pacientes.map(p => (
+                    <option key={p.id} value={p.id}>{p.nome}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+            {erroModal && (
+              <div style={{ marginTop:-8, marginBottom:10, padding:"8px 12px", background:"#fff1f2",
+                border:"1px solid #fecdd3", borderRadius:8, fontSize:12, color:"#be123c", fontWeight:600 }}>
+                ⚠️ {erroModal}
+              </div>
+            )}
+          </>
+        )}
+
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:14 }}>
+          <div>
+            <div style={{ fontSize:11, fontWeight:700, color:"#64748b", textTransform:"uppercase",
+              letterSpacing:"0.06em", marginBottom:5 }}>Data *</div>
+            <input type="date" value={data} onChange={e => setData(e.target.value)}
+              style={{ width:"100%", padding:"8px 12px", border:"1.5px solid #e2e8f0",
+                borderRadius:8, fontSize:13, color:"#0f172a", outline:"none", boxSizing:"border-box" }} />
+          </div>
+          <div>
+            <div style={{ fontSize:11, fontWeight:700, color:"#64748b", textTransform:"uppercase",
+              letterSpacing:"0.06em", marginBottom:5 }}>Hora início *</div>
+            <input type="time" value={horaInicio} onChange={e => setHoraInicio(e.target.value)}
+              style={{ width:"100%", padding:"8px 12px", border:"1.5px solid #e2e8f0",
+                borderRadius:8, fontSize:13, color:"#0f172a", outline:"none", boxSizing:"border-box" }} />
+          </div>
+        </div>
+
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:14 }}>
+          <div>
+            <div style={{ fontSize:11, fontWeight:700, color:"#64748b", textTransform:"uppercase",
+              letterSpacing:"0.06em", marginBottom:5 }}>Duração</div>
+            <select value={duracao} onChange={e => setDuracao(e.target.value)}
+              style={{ width:"100%", padding:"8px 12px", border:"1.5px solid #e2e8f0",
+                borderRadius:8, fontSize:13, color:"#0f172a", outline:"none",
+                background:"#fff", boxSizing:"border-box" }}>
+              <option value={30}>30 min</option>
+              <option value={45}>45 min</option>
+              <option value={50}>50 min</option>
+              <option value={60}>60 min</option>
+              <option value={90}>90 min</option>
+            </select>
+          </div>
+          <div>
+            <div style={{ fontSize:11, fontWeight:700, color:"#64748b", textTransform:"uppercase",
+              letterSpacing:"0.06em", marginBottom:5 }}>Hora fim</div>
+            <div style={{ padding:"9px 12px", border:"1.5px solid #f1f5f9", borderRadius:8,
+              fontSize:13, color:"#94a3b8", background:"#f8fafc" }}>
+              {horaFim}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ marginBottom:14 }}>
+          <div style={{ fontSize:11, fontWeight:700, color:"#64748b", textTransform:"uppercase",
+            letterSpacing:"0.06em", marginBottom:5 }}>Tipo</div>
+          <select value={tipo} onChange={e => setTipo(e.target.value)}
+            style={{ width:"100%", padding:"8px 12px", border:"1.5px solid #e2e8f0",
+              borderRadius:8, fontSize:13, color:"#0f172a", outline:"none",
+              background:"#fff", boxSizing:"border-box" }}>
+            <option value="sessao">Sessão</option>
+            <option value="avaliacao">Avaliação</option>
+            <option value="retorno">Retorno</option>
+            <option value="outro">Outro</option>
+          </select>
+        </div>
+
+        {!modoEdicao && (
+          <>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:14 }}>
+              <div>
+                <div style={{ fontSize:11, fontWeight:700, color:"#64748b", textTransform:"uppercase",
+                  letterSpacing:"0.06em", marginBottom:5 }}>Recorrência</div>
+                <select value={recorrencia} onChange={e => setRecorrencia(e.target.value)}
+                  style={{ width:"100%", padding:"8px 12px", border:"1.5px solid #e2e8f0",
+                    borderRadius:8, fontSize:13, color:"#0f172a", outline:"none",
+                    background:"#fff", boxSizing:"border-box" }}>
+                  <option value="nenhuma">Pontual</option>
+                  <option value="semanal">Semanal</option>
+                  <option value="quinzenal">Quinzenal</option>
+                  <option value="mensal">Mensal</option>
+                </select>
+              </div>
+              {recorrencia !== "nenhuma" && (
+                <div>
+                  <div style={{ fontSize:11, fontWeight:700, color:"#64748b", textTransform:"uppercase",
+                    letterSpacing:"0.06em", marginBottom:5 }}>Repetições</div>
+                  <select value={repeticoes} onChange={e => setRepeticoes(Number(e.target.value))}
+                    style={{ width:"100%", padding:"8px 12px", border:"1.5px solid #e2e8f0",
+                      borderRadius:8, fontSize:13, color:"#0f172a", outline:"none",
+                      background:"#fff", boxSizing:"border-box" }}>
+                    <option value={4}>4×</option>
+                    <option value={8}>8×</option>
+                    <option value={12}>12×</option>
+                    <option value={24}>24×</option>
+                  </select>
+                </div>
+              )}
+            </div>
+            {recorrencia !== "nenhuma" && (
+              <div style={{ padding:"8px 12px", background:"#f0fdf4", border:"1px solid #bbf7d0",
+                borderRadius:8, fontSize:11, color:"#166534", fontWeight:600, marginBottom:14 }}>
+                Serão criados {offsets.length} agendamentos · {offsets.length > 1 ? `até ${new Date(new Date(`${data}T${horaInicio}:00`).getTime() + offsets[offsets.length-1]*86400000).toLocaleDateString("pt-BR")}` : ""}
+              </div>
+            )}
+          </>
+        )}
+
+        <div style={{ marginBottom:24 }}>
+          <div style={{ fontSize:11, fontWeight:700, color:"#64748b", textTransform:"uppercase",
+            letterSpacing:"0.06em", marginBottom:5 }}>Notas (opcional)</div>
+          <textarea value={notas} onChange={e => setNotas(e.target.value)}
+            placeholder="Ex: Primeira sessão de avaliação inicial"
+            rows={2}
+            style={{ width:"100%", padding:"8px 12px", border:"1.5px solid #e2e8f0",
+              borderRadius:8, fontSize:13, color:"#0f172a", outline:"none",
+              resize:"vertical", boxSizing:"border-box", fontFamily:"inherit" }} />
+        </div>
+
+        <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
+          <button onClick={onFechar}
+            style={{ padding:"9px 20px", background:"#f1f5f9", color:"#475569",
+              border:"none", borderRadius:8, fontSize:13, fontWeight:700, cursor:"pointer" }}>
+            Cancelar
+          </button>
+          <button onClick={salvar} disabled={salvando}
+            style={{ padding:"9px 24px", background:"#6366f1", color:"#fff",
+              border:"none", borderRadius:8, fontSize:13, fontWeight:700, cursor:"pointer",
+              opacity: salvando ? 0.6 : 1 }}>
+            {salvando ? "Salvando…" : modoEdicao ? "Salvar alterações" : recorrencia !== "nenhuma" ? `Agendar ${offsets.length} sessões` : "Agendar"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── TELA: CALENDÁRIO SEMANAL ─────────────────────────────────────────────────────
+const _CAL_HORA_INI = 7;
+const _CAL_HORA_FIM = 21;
+const _CAL_SLOT_H = 40; // px por 30 min
+const _CAL_SLOTS = (() => {
+  const s = [];
+  for (let h = _CAL_HORA_INI; h < _CAL_HORA_FIM; h++) {
+    s.push({ h, m: 0 });
+    s.push({ h, m: 30 });
+  }
+  return s;
+})();
+const _CAL_NOMES = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
+const _CAL_TIPO_LABEL = { sessao:"Sessão", avaliacao:"Avaliação", retorno:"Retorno", outro:"Outro" };
+const _CAL_STATUS_ESTILO = {
+  realizado: { bg:"#f0fdf4", border:"#86efac", borderLeft:"#16a34a", cor:"#166534", prefixo:"✓ " },
+  cancelado:  { bg:"#f1f5f9", border:"#cbd5e1", borderLeft:"#94a3b8", cor:"#94a3b8", prefixo:"✕ " },
+};
+
+const TelaCalendario = ({ agendamentos, setAgendamentos, pacientes, terapeutaId, onIrParaCopiloto, onCarregarSemana }) => {
+  const [semanaOffset, setSemanaOffset] = useState(0);
+  const [modalSlot, setModalSlot] = useState(null);
+  const [agendSel, setAgendSel] = useState(null);
+  const [modoVista, setModoVista] = useState("semana"); // "semana" | "dia"
+  const [diaSel, setDiaSel] = useState(0); // índice 0-6 dentro da semana
+  const [draggingId, setDraggingId] = useState(null);
+  const [agendEditing, setAgendEditing] = useState(null);
+
+  const getSegunda = (offset) => {
+    const d = new Date();
+    const dow = d.getDay();
+    const diff = dow === 0 ? -6 : 1 - dow;
+    const s = new Date(d);
+    s.setDate(d.getDate() + diff + offset * 7);
+    s.setHours(0, 0, 0, 0);
+    return s;
+  };
+
+  const segunda = getSegunda(semanaOffset);
+  const dias = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(segunda);
+    d.setDate(segunda.getDate() + i);
+    return d;
+  });
+
+  const hojeRef = new Date();
+  hojeRef.setHours(0, 0, 0, 0);
+
+  // Carrega dados ao navegar para semana fora do range inicial
+  useEffect(() => {
+    if (!onCarregarSemana) return;
+    const dom = new Date(segunda); dom.setHours(0, 0, 0, 0);
+    const sab = new Date(dom); sab.setDate(dom.getDate() + 6); sab.setHours(23, 59, 59, 999);
+    onCarregarSemana(dom, sab);
+  }, [semanaOffset]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const mesmoDia = (d1, d2) =>
+    d1.getFullYear() === d2.getFullYear() &&
+    d1.getMonth() === d2.getMonth() &&
+    d1.getDate() === d2.getDate();
+
+  const agendsDia = (dia) =>
+    agendamentos.filter(a => mesmoDia(new Date(a.inicio), dia));
+
+  const posAgend = (a) => {
+    const ini = new Date(a.inicio);
+    const fim = new Date(a.fim);
+    const topMin = (ini.getHours() - _CAL_HORA_INI) * 60 + ini.getMinutes();
+    const top = (topMin / 30) * _CAL_SLOT_H;
+    const durMin = Math.max(30, (fim - ini) / 60000);
+    return { top, height: (durMin / 30) * _CAL_SLOT_H };
+  };
+
+  const labelSemana = () => {
+    const fim = new Date(segunda);
+    fim.setDate(segunda.getDate() + 6);
+    const o = { day:"numeric", month:"short" };
+    return `${segunda.toLocaleDateString("pt-BR", o)} – ${fim.toLocaleDateString("pt-BR", { ...o, year:"numeric" })}`;
+  };
+
+  const TOTAL_H = _CAL_SLOTS.length * _CAL_SLOT_H;
+  const diaAtual = dias[diaSel];
+
+  const navegarDia = (delta) => {
+    const novo = diaSel + delta;
+    if (novo < 0) { setSemanaOffset(o => o - 1); setDiaSel(6); }
+    else if (novo > 6) { setSemanaOffset(o => o + 1); setDiaSel(0); }
+    else setDiaSel(novo);
+  };
+
+  const handleDrop = async (e, dia, h, m) => {
+    e.preventDefault();
+    const agendId = e.dataTransfer.getData("agendId");
+    if (!agendId) return;
+    const agend = agendamentos.find(a => a.id === agendId);
+    if (!agend) return;
+    const durMin = Math.round((new Date(agend.fim) - new Date(agend.inicio)) / 60000);
+    const novoIni = new Date(dia); novoIni.setHours(h, m, 0, 0);
+    const novoFim = new Date(novoIni.getTime() + durMin * 60000);
+    setDraggingId(null);
+    setAgendamentos(prev => prev.map(a => a.id === agendId
+      ? { ...a, inicio: novoIni.toISOString(), fim: novoFim.toISOString() } : a));
+    const { error } = await atualizarAgendamento(agendId, {
+      inicio: novoIni.toISOString(), fim: novoFim.toISOString(),
+    });
+    if (error) {
+      setAgendamentos(prev => prev.map(a => a.id === agendId ? agend : a));
+      alert(`Erro ao mover: ${error.message}`);
+    }
+  };
+
+  const handleCancelarAgendamento = async (id) => {
+    if (!window.confirm("Cancelar este agendamento?")) return;
+    setAgendamentos(prev => prev.map(a => a.id === id ? { ...a, status: "cancelado" } : a));
+    setAgendSel(null);
+    const { error } = await cancelarAgendamento(id);
+    if (error) {
+      setAgendamentos(prev => prev.map(a => a.id === id ? { ...a, status: "agendado" } : a));
+      alert(`Erro ao cancelar: ${error.message}`);
+    }
+  };
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", height:"100%", overflow:"hidden", background:"#fff" }}>
+
+      {/* Barra de navegação */}
+      <div style={{ display:"flex", alignItems:"center", gap:8, padding:"10px 16px",
+        borderBottom:"1px solid #f1f5f9", flexShrink:0 }}>
+
+        {/* Navegação esquerda */}
+        <button onClick={() => modoVista === "semana" ? setSemanaOffset(o => o - 1) : navegarDia(-1)}
+          style={{ padding:"5px 12px", border:"1.5px solid #e2e8f0", borderRadius:8,
+            background:"#fff", cursor:"pointer", fontSize:16, color:"#64748b" }}>‹</button>
+
+        {/* Label central */}
+        <div style={{ flex:1, textAlign:"center", fontSize:13, fontWeight:700, color:"#0f172a" }}>
+          {modoVista === "semana"
+            ? labelSemana()
+            : diaAtual.toLocaleDateString("pt-BR", { weekday:"long", day:"numeric", month:"long", year:"numeric" })}
+        </div>
+
+        {/* Botão Hoje */}
+        <button onClick={() => { setSemanaOffset(0); setDiaSel(hojeRef.getDay() === 0 ? 6 : hojeRef.getDay() - 1); }}
+          style={{ padding:"5px 12px", border:"1.5px solid #e2e8f0", borderRadius:8, cursor:"pointer",
+            fontSize:12, fontWeight:700,
+            background: semanaOffset === 0 && (modoVista === "semana" || mesmoDia(diaAtual, hojeRef)) ? "#ede9fe" : "#fff",
+            color: semanaOffset === 0 && (modoVista === "semana" || mesmoDia(diaAtual, hojeRef)) ? "#4f46e5" : "#64748b" }}>
+          Hoje
+        </button>
+
+        {/* Navegação direita */}
+        <button onClick={() => modoVista === "semana" ? setSemanaOffset(o => o + 1) : navegarDia(1)}
+          style={{ padding:"5px 12px", border:"1.5px solid #e2e8f0", borderRadius:8,
+            background:"#fff", cursor:"pointer", fontSize:16, color:"#64748b" }}>›</button>
+
+        {/* Toggle Semana/Dia */}
+        <div style={{ display:"flex", border:"1.5px solid #e2e8f0", borderRadius:8, overflow:"hidden", marginLeft:4 }}>
+          {["semana","dia"].map(v => (
+            <button key={v} onClick={() => setModoVista(v)}
+              style={{ padding:"5px 12px", border:"none", cursor:"pointer", fontSize:11, fontWeight:700,
+                background: modoVista === v ? "#6366f1" : "#fff",
+                color: modoVista === v ? "#fff" : "#64748b" }}>
+              {v === "semana" ? "Semana" : "Dia"}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Grade */}
+      <div style={{ flex:1, overflowY:"auto", display:"flex", flexDirection:"column" }}>
+
+        {/* Cabeçalho de dias — sticky */}
+        <div style={{ display:"flex", borderBottom:"2px solid #e2e8f0",
+          position:"sticky", top:0, zIndex:10, background:"#fff" }}>
+          <div style={{ width:52, flexShrink:0 }} />
+          {(modoVista === "semana" ? dias : [diaAtual]).map((dia, i) => {
+            const isHoje = mesmoDia(dia, hojeRef);
+            const isSel = modoVista === "semana" && i === diaSel;
+            const nomIdx = modoVista === "semana" ? i : diaSel;
+            return (
+              <div key={i}
+                onClick={() => { if (modoVista === "semana") { setDiaSel(i); setModoVista("dia"); } }}
+                style={{ flex:1, padding:"8px 4px", textAlign:"center",
+                  borderLeft:"1px solid #f1f5f9",
+                  cursor: modoVista === "semana" ? "pointer" : "default",
+                  background: isSel ? "#f5f3ff" : "transparent" }}>
+                <div style={{ fontSize:10, fontWeight:700,
+                  color: isSel ? "#6366f1" : "#94a3b8",
+                  textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:3 }}>
+                  {_CAL_NOMES[nomIdx]}
+                </div>
+                <div style={{ width:28, height:28, borderRadius:"50%",
+                  display:"inline-flex", alignItems:"center", justifyContent:"center",
+                  fontSize:13, fontWeight:800,
+                  background: isHoje ? "#6366f1" : isSel ? "#ede9fe" : "transparent",
+                  color: isHoje ? "#fff" : isSel ? "#4f46e5" : "#0f172a" }}>
+                  {dia.getDate()}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Corpo da grade */}
+        <div style={{ display:"flex", flex:1, minHeight:TOTAL_H }}>
+
+          {/* Coluna de horas */}
+          <div style={{ width:52, flexShrink:0, borderRight:"1px solid #f1f5f9" }}>
+            {_CAL_SLOTS.map(({ h, m }) => (
+              <div key={`t${h}${m}`} style={{ height:_CAL_SLOT_H, display:"flex",
+                alignItems:"flex-start", justifyContent:"flex-end",
+                paddingRight:6, paddingTop:3,
+                borderBottom:`1px solid ${m === 0 ? "#f1f5f9" : "transparent"}` }}>
+                {m === 0 && (
+                  <span style={{ fontSize:10, color:"#94a3b8", fontWeight:600 }}>
+                    {String(h).padStart(2,"0")}h
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* Colunas de dias (7 em semana, 1 em dia) */}
+          {(modoVista === "semana" ? dias : [diaAtual]).map((dia, di) => {
+            const agends = agendsDia(dia);
+            const isHoje = mesmoDia(dia, hojeRef);
+            return (
+              <div key={di} style={{ flex:1, position:"relative", height:TOTAL_H,
+                borderLeft:"1px solid #f1f5f9",
+                background: isHoje ? "#fafaff" : "#fff" }}>
+
+                {/* Áreas de slot clicáveis + drop target */}
+                {_CAL_SLOTS.map(({ h, m }, si) => (
+                  <div key={`s${h}${m}`}
+                    onClick={() => setModalSlot({
+                      data: new Date(dia),
+                      horaInicio: `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`,
+                    })}
+                    onDragOver={e => { e.preventDefault(); e.currentTarget.style.background = "#ede9fe"; }}
+                    onDragLeave={e => { e.currentTarget.style.background = "transparent"; }}
+                    onDrop={e => { e.currentTarget.style.background = "transparent"; handleDrop(e, dia, h, m); }}
+                    style={{ position:"absolute", top: si * _CAL_SLOT_H,
+                      left:0, right:0, height:_CAL_SLOT_H, cursor:"pointer",
+                      borderBottom:`1px solid ${m === 0 ? "#f1f5f9" : "#f8fafc"}` }}
+                    onMouseEnter={e => { if (!draggingId) e.currentTarget.style.background = "#f5f3ff"; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
+                  />
+                ))}
+
+                {/* Agendamentos */}
+                {agends.map(a => {
+                  const { top, height } = posAgend(a);
+                  const estilo = _CAL_STATUS_ESTILO[a.status] ?? null;
+                  const bloqueado = a.status === "cancelado" || a.status === "realizado";
+                  return (
+                    <div key={a.id}
+                      draggable={!bloqueado}
+                      onDragStart={e => { e.dataTransfer.setData("agendId", a.id); setDraggingId(a.id); }}
+                      onDragEnd={() => setDraggingId(null)}
+                      onClick={e => { e.stopPropagation(); setAgendSel(a); }}
+                      style={{ position:"absolute", top: top + 1, left:2, right:2,
+                        height: height - 2,
+                        background: estilo ? estilo.bg : "#ede9fe",
+                        border: `1.5px solid ${estilo ? estilo.border : "#a5b4fc"}`,
+                        borderLeft: `3px solid ${estilo ? estilo.borderLeft : "#6366f1"}`,
+                        borderRadius:6, padding:"3px 6px", overflow:"hidden",
+                        cursor: bloqueado ? "default" : "grab",
+                        opacity: draggingId === a.id ? 0.4 : bloqueado ? 0.7 : 1,
+                        zIndex:2 }}>
+                      <div style={{ fontSize:10, fontWeight:700,
+                        color: estilo ? estilo.cor : "#4f46e5",
+                        whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
+                        {estilo?.prefixo}
+                        {a.paciente_iniciais && <span style={{ opacity:0.7 }}>{a.paciente_iniciais} · </span>}
+                        {a.paciente_nome || "Agendamento"}
+                      </div>
+                      {height > _CAL_SLOT_H && (
+                        <div style={{ fontSize:9, color: estilo ? estilo.cor : "#6366f1", opacity:0.7, marginTop:1 }}>
+                          {new Date(a.inicio).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})}
+                          –{new Date(a.fim).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Popover de agendamento selecionado */}
+      {agendSel && (
+        <div style={{ position:"fixed", inset:0, zIndex:150, background:"rgba(0,0,0,0.25)" }}
+          onClick={() => setAgendSel(null)}>
+          <div style={{ position:"absolute", top:"50%", left:"50%",
+            transform:"translate(-50%,-50%)",
+            background:"#fff", borderRadius:14, padding:"20px 20px 16px",
+            boxShadow:"0 8px 32px rgba(0,0,0,0.18)", border:"1px solid #f1f5f9",
+            width:300 }}
+            onClick={e => e.stopPropagation()}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:8 }}>
+              <div>
+                <div style={{ fontSize:15, fontWeight:800, color:"#0f172a" }}>
+                  {agendSel.paciente_nome || "Agendamento"}
+                </div>
+                <div style={{ fontSize:11, color:"#6366f1", fontWeight:600, marginTop:2 }}>
+                  {_CAL_TIPO_LABEL[agendSel.tipo] ?? agendSel.tipo}
+                </div>
+              </div>
+              <span style={{ fontSize:11, fontWeight:700, padding:"2px 8px", borderRadius:10,
+                background: agendSel.status === "cancelado" ? "#fff1f2" : agendSel.status === "realizado" ? "#f0fdf4" : "#ede9fe",
+                color: agendSel.status === "cancelado" ? "#dc2626" : agendSel.status === "realizado" ? "#16a34a" : "#4f46e5" }}>
+                {agendSel.status === "realizado" ? "✓ realizado" : agendSel.status}
+              </span>
+            </div>
+            <div style={{ fontSize:12, color:"#64748b", marginBottom:16 }}>
+              📅 {new Date(agendSel.inicio).toLocaleDateString("pt-BR",{weekday:"short",day:"numeric",month:"short"})}
+              {"  ·  "}
+              🕐 {new Date(agendSel.inicio).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})}
+              {" – "}
+              {new Date(agendSel.fim).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})}
+            </div>
+            {agendSel.notas && (
+              <div style={{ fontSize:12, color:"#64748b", background:"#f8fafc",
+                borderRadius:8, padding:"8px 10px", marginBottom:14, fontStyle:"italic" }}>
+                {agendSel.notas}
+              </div>
+            )}
+            {/* Botões de ação */}
+            <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+              {agendSel.paciente_nome && (
+                <button
+                  onClick={() => {
+                    const p = pacientes.find(px => String(px.id) === String(agendSel.paciente_id));
+                    if (p && onIrParaCopiloto) onIrParaCopiloto(p);
+                    setAgendSel(null);
+                  }}
+                  style={{ flex:1, padding:"7px 0", background:"#6366f1", color:"#fff",
+                    border:"none", borderRadius:8, fontSize:12, fontWeight:700, cursor:"pointer" }}>
+                  Abrir copiloto
+                </button>
+              )}
+              {agendSel.status !== "cancelado" && (
+                <button
+                  onClick={() => { setAgendEditing(agendSel); setAgendSel(null); }}
+                  style={{ flex:1, padding:"7px 0", background:"#f0fdf4", color:"#16a34a",
+                    border:"1px solid #bbf7d0", borderRadius:8, fontSize:12, fontWeight:700, cursor:"pointer" }}>
+                  ✏️ Editar
+                </button>
+              )}
+              {agendSel.status !== "cancelado" && (
+                <button
+                  onClick={() => handleCancelarAgendamento(agendSel.id)}
+                  style={{ flex:1, padding:"7px 0", background:"#fff1f2", color:"#dc2626",
+                    border:"1px solid #fecdd3", borderRadius:8, fontSize:12, fontWeight:700, cursor:"pointer" }}>
+                  ✕ Cancelar
+                </button>
+              )}
+              <button onClick={() => setAgendSel(null)}
+                style={{ flex:1, padding:"7px 0", background:"#f1f5f9", color:"#475569",
+                  border:"none", borderRadius:8, fontSize:12, fontWeight:700, cursor:"pointer" }}>
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal ao clicar em slot vazio */}
+      {modalSlot && (
+        <ModalAgendamento
+          paciente={null}
+          pacientes={pacientes}
+          terapeutaId={terapeutaId}
+          dataInicial={modalSlot.data.toISOString().slice(0, 10)}
+          horaInicioInicial={modalSlot.horaInicio}
+          onSalvar={novos => {
+            const lista = Array.isArray(novos) ? novos : [novos];
+            setAgendamentos(prev => [...prev, ...lista]);
+            setModalSlot(null);
+          }}
+          onFechar={() => setModalSlot(null)}
+        />
+      )}
+
+      {/* Modal de edição de agendamento existente */}
+      {agendEditing && (
+        <ModalAgendamento
+          paciente={pacientes.find(p => String(p.id) === String(agendEditing.paciente_id)) ?? null}
+          pacientes={pacientes}
+          terapeutaId={terapeutaId}
+          agendamentoExistente={agendEditing}
+          onSalvar={novos => {
+            const atualizado = novos[0];
+            setAgendamentos(prev => prev.map(a => a.id === agendEditing.id
+              ? { ...a, ...atualizado } : a));
+            setAgendEditing(null);
+          }}
+          onFechar={() => setAgendEditing(null)}
+        />
+      )}
+    </div>
+  );
+};
 
 // ─── APP PRINCIPAL ──────────────────────────────────────────────────────────────
 export default function App() {
@@ -3057,9 +4402,13 @@ export default function App() {
   const [mostrarPacientes, setMostrarPacientes] = useState(false);
   const [sessaoAuth, setSessaoAuth] = useState(null);
   const [carregandoAuth, setCarregandoAuth] = useState(true);
+  const [terapeutaNome, setTerapeutaNome] = useState("");
   const [secaoAtiva, setSecaoAtiva] = useState("agenda");   // "agenda" | "pacientes" | null
   const [abaAgenda, setAbaAgenda] = useState("hoje");        // "hoje" | "calendario"
   const [agendamentos, setAgendamentos] = useState([]);
+  const [modalAgendamentoAberto, setModalAgendamentoAberto] = useState(false);
+  const [pacienteParaAgendar, setPacienteParaAgendar] = useState(null);
+  const agendRangeRef = useRef({ inicio: null, fim: null }); // rastreia range já carregado
 
   const mapearPaciente = (p, idx) => ({
     ...p,
@@ -3081,6 +4430,16 @@ export default function App() {
       setSessaoAuth(sessao);
       setCarregandoAuth(false);
       if (sessao?.user?.id && sessao.user.id !== "demo") {
+        // Garante que existe uma linha em terapeutas (caso o trigger não tenha disparado no cadastro)
+        if (hasSupabase) {
+          await supabase.from("terapeutas").upsert(
+            { id: sessao.user.id, email: sessao.user.email },
+            { onConflict: "id", ignoreDuplicates: true }
+          );
+          const { data: perfil } = await supabase
+            .from("terapeutas").select("nome").eq("id", sessao.user.id).maybeSingle();
+          if (perfil?.nome) setTerapeutaNome(perfil.nome);
+        }
         const { data: lista } = await listarPacientes(sessao.user.id);
         if (lista && lista.length > 0) {
           const mapeados = lista.map(mapearPaciente);
@@ -3089,19 +4448,29 @@ export default function App() {
         }
         // lista vazia → mantém PACIENTES demo já no estado inicial
 
-        // Carrega agendamentos da semana corrente
+        // Carrega agendamentos: 1 mês atrás até 3 meses à frente
         const hoje = new Date();
-        const dom = new Date(hoje); dom.setDate(hoje.getDate() - hoje.getDay()); dom.setHours(0,0,0,0);
-        const sab = new Date(dom); sab.setDate(dom.getDate() + 6); sab.setHours(23,59,59,999);
-        listarAgendamentos(sessao.user.id, dom.toISOString(), sab.toISOString())
-          .then(({ data }) => { if (data) setAgendamentos(data); });
+        const rIni = new Date(hoje); rIni.setMonth(hoje.getMonth() - 1); rIni.setHours(0,0,0,0);
+        const rFim = new Date(hoje); rFim.setMonth(hoje.getMonth() + 3); rFim.setHours(23,59,59,999);
+        listarAgendamentos(sessao.user.id, rIni.toISOString(), rFim.toISOString())
+          .then(({ data }) => {
+            if (data) {
+              setAgendamentos(data);
+              agendRangeRef.current = { inicio: rIni, fim: rFim };
+            }
+          });
       } else {
-        // Modo mock: carrega agendamentos simulados
+        // Modo mock: carrega agendamentos simulados (range amplo)
         const hoje = new Date();
-        const dom = new Date(hoje); dom.setDate(hoje.getDate() - hoje.getDay()); dom.setHours(0,0,0,0);
-        const sab = new Date(dom); sab.setDate(dom.getDate() + 6); sab.setHours(23,59,59,999);
-        listarAgendamentos("demo", dom.toISOString(), sab.toISOString())
-          .then(({ data }) => { if (data) setAgendamentos(data); });
+        const rIni = new Date(hoje); rIni.setMonth(hoje.getMonth() - 1); rIni.setHours(0,0,0,0);
+        const rFim = new Date(hoje); rFim.setMonth(hoje.getMonth() + 3); rFim.setHours(23,59,59,999);
+        listarAgendamentos("demo", rIni.toISOString(), rFim.toISOString())
+          .then(({ data }) => {
+            if (data) {
+              setAgendamentos(data);
+              agendRangeRef.current = { inicio: rIni, fim: rFim };
+            }
+          });
       }
     });
     return () => data?.subscription?.unsubscribe?.();
@@ -3137,10 +4506,15 @@ export default function App() {
   }, [paciente?.id]);
 
   const handleSessaoSalva = (novaSessao) => {
+    const pid = paciente.id;
     setPaciente(prev => ({
       ...prev,
       sessoes: prev.sessoes + 1,
       sessoesList: [novaSessao, ...prev.sessoesList],
+    }));
+    setPacientesLista(prev => prev.map(p => {
+      if (p.id !== pid) return p;
+      return { ...p, sessoes: (p.sessoes || 0) + 1, sessoesList: [novaSessao, ...(p.sessoesList || [])] };
     }));
     setAba("historico");
   };
@@ -3186,6 +4560,29 @@ export default function App() {
 
   const terapeutaId = sessaoAuth?.user?.id;
 
+  const proxAgend = _proxAgendDe(paciente.id, agendamentos);
+  const proxLabel = _labelAgend(proxAgend);
+  const abrirAgendamento = (p) => { setPacienteParaAgendar(p ?? paciente); setModalAgendamentoAberto(true); };
+
+  const carregarSemana = async (inicioSemana, fimSemana) => {
+    const { inicio, fim } = agendRangeRef.current;
+    // Semana já está dentro do range carregado → nada a fazer
+    if (inicio && fim && inicioSemana >= inicio && fimSemana <= fim) return;
+    const uid = terapeutaId ?? "demo";
+    const { data } = await listarAgendamentos(uid, inicioSemana.toISOString(), fimSemana.toISOString());
+    if (data && data.length > 0) {
+      setAgendamentos(prev => {
+        const ids = new Set(prev.map(a => a.id));
+        return [...prev, ...data.filter(a => !ids.has(a.id))];
+      });
+    }
+    // Expande o range registrado (mesmo que não tenha retornado dados — semana vazia é válida)
+    agendRangeRef.current = {
+      inicio: inicio ? new Date(Math.min(inicio.getTime(), inicioSemana.getTime())) : inicioSemana,
+      fim:    fim    ? new Date(Math.max(fim.getTime(),    fimSemana.getTime()))    : fimSemana,
+    };
+  };
+
   const abas = [
     { id:"historico", label:"Histórico", icon:"📋" },
     { id:"mural", label:"Mural", icon:"🏷️" },
@@ -3208,19 +4605,23 @@ export default function App() {
             <span style={{ fontSize:13, fontWeight:700, color:"#0f172a", flex:1, textAlign:"left", overflow:"hidden", whiteSpace:"nowrap", textOverflow:"ellipsis" }}>{paciente.nome}</span>
             <span style={{ fontSize:12, color:"#94a3b8" }}>▾</span>
           </button>
-          <div style={{ padding:"4px 10px", background: paciente.proximaSessao.includes("Hoje") ? "#fff1f2" : "#f1f5f9", borderRadius:8, fontSize:11, fontWeight:700, color: paciente.proximaSessao.includes("Hoje") ? "#dc2626" : "#475569", flexShrink:0 }}>
-            {paciente.proximaSessao.includes("Hoje") ? "🔴 Hoje" : paciente.proximaSessao}
+          <div onClick={abrirAgendamento}
+            style={{ padding:"4px 10px", background: proxLabel.includes("Hoje") ? "#fff1f2" : "#f1f5f9",
+              borderRadius:8, fontSize:11, fontWeight:700,
+              color: proxLabel.includes("Hoje") ? "#dc2626" : "#475569",
+              flexShrink:0, cursor:"pointer" }}>
+            {proxLabel.includes("Hoje") ? "🔴 Hoje" : proxLabel}
           </div>
         </div>
 
         {/* Conteúdo */}
         <div style={{ flex:1, overflow:"hidden" }}>
-          {aba === "historico" && <TelaHistorico paciente={paciente} isMobile={isMobile} />}
+          {aba === "historico" && <TelaHistorico paciente={paciente} isMobile={isMobile} onAgendar={abrirAgendamento} proximaSessao={proxLabel} />}
           {aba === "mural" && <TelaMural paciente={paciente} />}
-          {aba === "plano" && <TelaPlano paciente={paciente} isMobile={isMobile} terapeutaId={terapeutaId} />}
-          {aba === "importar" && <TelaImportar paciente={paciente} isMobile={isMobile} terapeutaId={terapeutaId} onSessaoSalva={handleSessaoSalva} />}
+          {aba === "plano" && <TelaPlano paciente={paciente} isMobile={isMobile} terapeutaId={terapeutaId} onAgendar={abrirAgendamento} proximaSessao={proxLabel} />}
+          {aba === "importar" && <TelaImportar paciente={paciente} isMobile={isMobile} terapeutaId={terapeutaId} onSessaoSalva={handleSessaoSalva} agendamentos={agendamentos} onAgendamentoRealizado={id => setAgendamentos(prev => prev.map(a => a.id === id ? { ...a, status:"realizado" } : a))} />}
           {aba === "insights" && <TelaInsights paciente={paciente} analise={analisarPadroes(paciente.sessoesList)} />}
-          {aba === "perfil" && <TelaPerfil paciente={paciente} isMobile={isMobile} onAtualizar={handleAtualizarPaciente} onExcluir={handleExcluirPaciente} />}
+          {aba === "perfil" && <TelaPerfil paciente={paciente} isMobile={isMobile} terapeutaId={terapeutaId} terapeutaNome={terapeutaNome} terapeutaEmail={sessaoAuth?.user?.email} onAtualizar={handleAtualizarPaciente} onExcluir={handleExcluirPaciente} />}
         </div>
 
         {/* Nav bottom */}
@@ -3257,6 +4658,7 @@ export default function App() {
                   onNovoPaciente={handleNovoPaciente}
                   terapeutaId={terapeutaId}
                   menuAberto={true}
+                  onAbrirAgendamento={p => { setPacienteParaAgendar(p); setModalAgendamentoAberto(true); }}
                 />
               </div>
             </div>
@@ -3342,15 +4744,13 @@ export default function App() {
                     </span>
                   </div>
 
-                  {/* Lista de pacientes — aninhada sob "Hoje / Amanhã" */}
+                  {/* Lista de agendamentos de hoje/amanhã */}
                   {abaAgenda === "hoje" && (
-                    <TelaPacientes
-                      modo="agenda"
+                    <AgendaHojeList
+                      agendamentos={agendamentos}
                       pacientes={pacientesLista}
                       onSelect={p => { setPaciente(p); setAba("historico"); }}
-                      pacienteSelecionado={paciente}
-                      terapeutaId={terapeutaId}
-                      menuAberto={true}
+                      onNovoAgendamento={abrirAgendamento}
                     />
                   )}
 
@@ -3400,6 +4800,7 @@ export default function App() {
                   onNovoPaciente={handleNovoPaciente}
                   terapeutaId={terapeutaId}
                   menuAberto={true}
+                  onAbrirAgendamento={p => { setPacienteParaAgendar(p); setModalAgendamentoAberto(true); }}
                 />
               )}
             </div>
@@ -3458,13 +4859,21 @@ export default function App() {
             </>
           )}
 
-          {/* Próxima sessão destaque */}
-          <div style={{ marginLeft:"auto", padding:"5px 14px",
-            background: paciente.proximaSessao.includes("Hoje") ? "#fff1f2" : "#f1f5f9",
-            borderRadius:8, fontSize:12, fontWeight:700,
-            color: paciente.proximaSessao.includes("Hoje") ? "#dc2626" : "#475569" }}>
-            {paciente.proximaSessao.includes("Hoje") ? "🔴 " : "📅 "}
-            {paciente.proximaSessao}
+          {/* Próxima sessão + botão agendar */}
+          <div style={{ marginLeft:"auto", display:"flex", alignItems:"center", gap:8 }}>
+            <div style={{ padding:"5px 12px",
+              background: proxLabel.includes("Hoje") ? "#fff1f2" : "#f1f5f9",
+              borderRadius:8, fontSize:12, fontWeight:700,
+              color: proxLabel.includes("Hoje") ? "#dc2626" : "#475569" }}>
+              {proxLabel.includes("Hoje") ? "🔴 " : "📅 "}
+              {proxLabel}
+            </div>
+            <button onClick={() => { setPacienteParaAgendar(null); setModalAgendamentoAberto(true); }}
+              style={{ padding:"5px 12px", background:"#6366f1", color:"#fff",
+                border:"none", borderRadius:8, fontSize:12, fontWeight:700,
+                cursor:"pointer", whiteSpace:"nowrap" }}>
+              + Agendar
+            </button>
           </div>
         </div>
 
@@ -3477,19 +4886,39 @@ export default function App() {
               pacientes={pacientesLista}
               terapeutaId={terapeutaId}
               onIrParaCopiloto={p => { setPaciente(p); setAba("historico"); setAbaAgenda("hoje"); }}
+              onCarregarSemana={carregarSemana}
             />
           ) : (
             <>
-              {aba === "historico" && <TelaHistorico paciente={paciente} />}
+              {aba === "historico" && <TelaHistorico paciente={paciente} onAgendar={abrirAgendamento} proximaSessao={proxLabel} />}
               {aba === "mural" && <TelaMural paciente={paciente} />}
-              {aba === "plano" && <TelaPlano key={paciente.id} paciente={paciente} terapeutaId={terapeutaId} />}
-              {aba === "importar" && <TelaImportar paciente={paciente} terapeutaId={terapeutaId} onSessaoSalva={handleSessaoSalva} />}
+              {aba === "plano" && <TelaPlano key={paciente.id} paciente={paciente} terapeutaId={terapeutaId} onAgendar={abrirAgendamento} proximaSessao={proxLabel} />}
+              {aba === "importar" && <TelaImportar paciente={paciente} terapeutaId={terapeutaId} onSessaoSalva={handleSessaoSalva} agendamentos={agendamentos} onAgendamentoRealizado={id => setAgendamentos(prev => prev.map(a => a.id === id ? { ...a, status:"realizado" } : a))} />}
               {aba === "insights" && <TelaInsights paciente={paciente} analise={analisarPadroes(paciente.sessoesList)} />}
-              {aba === "perfil" && <TelaPerfil paciente={paciente} onAtualizar={handleAtualizarPaciente} onExcluir={handleExcluirPaciente} />}
+              {aba === "perfil" && <TelaPerfil paciente={paciente} terapeutaId={terapeutaId} terapeutaNome={terapeutaNome} terapeutaEmail={sessaoAuth?.user?.email} onAtualizar={handleAtualizarPaciente} onExcluir={handleExcluirPaciente} />}
             </>
           )}
         </div>
       </div>
+
+      {/* Modal de agendamento (nível global) */}
+      {modalAgendamentoAberto && (
+        <ModalAgendamento
+          paciente={pacienteParaAgendar}
+          pacientes={pacientesLista}
+          terapeutaId={terapeutaId}
+          onSalvar={novos => {
+            const lista = Array.isArray(novos) ? novos : [novos];
+            setAgendamentos(prev => [...prev, ...lista]);
+            setModalAgendamentoAberto(false);
+            setPacienteParaAgendar(null);
+          }}
+          onFechar={() => {
+            setModalAgendamentoAberto(false);
+            setPacienteParaAgendar(null);
+          }}
+        />
+      )}
 
       {/* Carrega fonte */}
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet"/>
