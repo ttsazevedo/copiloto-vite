@@ -5863,8 +5863,8 @@ const TelaConfiguracoes = ({ terapeutaId, terapeutaEmail, perfil, onSalvar }) =>
               textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:6 }}>
               Sessões usadas pela IA no plano
             </label>
-            <div style={{ display:"flex", gap:8 }}>
-              {[3, 4, 5].map(n => (
+            <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+              {[1, 3, 4, 5].map(n => (
                 <button key={n} type="button"
                   onClick={() => setForm(f => ({ ...f, janela_contexto: n }))}
                   style={{ padding:"6px 18px", borderRadius:8, border:"1.5px solid",
@@ -5872,12 +5872,12 @@ const TelaConfiguracoes = ({ terapeutaId, terapeutaEmail, perfil, onSalvar }) =>
                     background: form.janela_contexto === n ? "#eef2ff" : "#fff",
                     color: form.janela_contexto === n ? "#6366f1" : "#64748b",
                     fontWeight:600, fontSize:14, cursor:"pointer", fontFamily:"inherit" }}>
-                  {n}
+                  {n === 1 ? '1 — última sessão' : `${n} sessões`}
                 </button>
               ))}
             </div>
             <p style={{ fontSize:11, color:"#94a3b8", marginTop:6, marginBottom:0 }}>
-              Quantas sessões anteriores a IA analisa para gerar o plano. Mais sessões = análise mais longitudinal.
+              1 = plano baseado na sessão mais recente. 3, 4 ou 5 = análise longitudinal considera o histórico das últimas sessões para identificar padrões recorrentes.
             </p>
           </div>
         </div>
