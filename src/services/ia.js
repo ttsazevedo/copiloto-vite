@@ -281,3 +281,86 @@ Retorne SOMENTE o JSON abaixo. Sem texto antes, sem texto depois, sem markdown, 
   }
   return { plano: resultado, provider };
 }
+
+// ─── ANÁLISE LONGITUDINAL ───
+
+export async function gerarAnaliseLongitudinal(paciente, todasSessoes) {
+  const sessoes = [...todasSessoes].reverse();
+
+  const blocoSessoes = sessoes.map(s => `
+--- Sessão nº${s.numero} | ${s.data} ---
+Resumo: ${s.resumo || 'Não registrado'}
+Temas: ${(s.temas || []).join(', ') || 'Não registrado'}
+Distorções: ${(s.distorcoes || []).join(', ') || 'Nenhuma'}
+Técnicas: ${(s.tecnicas || []).join(', ') || 'Nenhuma'}
+Humor início→fim: ${s.humor_inicio ?? '?'} → ${s.humor_fim ?? '?'}
+Resultado da tarefa: ${s.resultado_tarefa || s.resultadoTarefa || 'Não registrado'}
+Alertas: ${(s.alertas || []).join(', ') || 'Nenhum'}
+`.trim()).join('\n\n');
+
+  const prompt = `
+Você é um assistente clínico especializado em análise longitudinal de casos.
+Analise o histórico completo abaixo e produza uma síntese clínica profunda.
+
+Você NÃO é supervisor clínico. Você sistematiza padrões que o histórico revela
+e que a memória humana tende a perder ao longo de muitas sessões.
+Não interprete dinâmica relacional, não prognostique, não diagnostique.
+
+## PERFIL DO PACIENTE
+Nome: ${paciente.nome}
+Queixa principal: ${paciente.queixa || 'Não informada'}
+Diagnóstico: ${paciente.diagnostico || 'Não fechado'}
+Abordagem: ${paciente.linha || 'tcc'}
+Meta terapêutica: ${paciente.meta || 'Não definida'}
+Total de sessões: ${sessoes.length}
+Em acompanhamento desde: ${paciente.inicio || 'Não informado'}
+
+## HISTÓRICO COMPLETO (${sessoes.length} sessões — ordem cronológica)
+${blocoSessoes}
+
+## INSTRUÇÕES
+
+Produza uma análise longitudinal com CINCO seções obrigatórias.
+Cada seção deve ter profundidade real — não resuma o óbvio.
+Identifique o que só é visível quando se olha o conjunto, não uma sessão isolada.
+
+SEÇÃO 1 — EVOLUÇÃO DO CASO
+O que mudou desde o início? O que permanece igual?
+Há progresso real ou progresso aparente?
+Que marcos clínicos são observáveis no histórico?
+
+SEÇÃO 2 — PADRÕES PERSISTENTES
+Quais distorções, temas ou comportamentos reaparecem mesmo após intervenção?
+Com que frequência? Em que contextos tendem a emergir?
+
+SEÇÃO 3 — PONTOS DE ATENÇÃO
+Discrepâncias entre o que foi prescrito e o resultado obtido.
+Sessões onde o humor piorou após o trabalho clínico.
+Lacunas: o que parece nunca ter sido explorado?
+
+SEÇÃO 4 — HIPÓTESES A EXPLORAR
+Com base nos padrões do histórico, o que pode estar por baixo da queixa apresentada?
+Que crenças centrais o histórico sugere?
+
+SEÇÃO 5 — DIREÇÃO PARA OS PRÓXIMOS CICLOS
+Com base em tudo que o histórico revela, qual é o foco mais produtivo
+para as próximas 3 a 5 sessões?
+
+Retorne SOMENTE o JSON abaixo. Sem markdown, sem texto fora do JSON.
+
+{
+  "evolucaoCaso": "string — mínimo 4 linhas",
+  "padroesPresistentes": [
+    { "padrao": "nome", "frequencia": "X de Y sessões", "contexto": "string", "indicacao": "string" }
+  ],
+  "pontosAtencao": ["string", "string"],
+  "hipoteses": ["string", "string"],
+  "direcaoProximosCiclos": "string — mínimo 3 linhas",
+  "sessoesAnalisadas": ${sessoes.length},
+  "dataAnalise": "${new Date().toLocaleDateString('pt-BR')}"
+}
+`.trim();
+
+  const { resultado, provider } = await chamarComFallback(prompt);
+  return { ...resultado, geradoPor: provider };
+}

@@ -3,7 +3,8 @@ import { onAuthStateChange, signOut } from "./services/auth.js";
 import { supabase, hasSupabase, testarConexao } from "./services/supabase.js";
 import TelaLogin from "./components/TelaLogin.jsx";
 import TelaCarregando from "./components/TelaCarregando.jsx";
-import { extrairSessaoDeTexto, gerarPlanoSessao } from "./services/ia.js";
+import { extrairSessaoDeTexto, gerarPlanoSessao, gerarAnaliseLongitudinal } from "./services/ia.js";
+import { buscarAnalise, salvarAnalise } from "./services/analise_longitudinal.js";
 import { salvarPlano, buscarPlano, atualizarPlano, buscarPlanoDaSessao, buscarPlanosEditados } from "./services/planos.js";
 import { testarChavesIA } from "./services/testarIA.js";
 import { listarSessoes, criarSessao } from "./services/sessoes.js";
@@ -4470,7 +4471,7 @@ const TelaMural = ({ paciente }) => {
 };
 
 // ─── TELA: INSIGHTS LONGITUDINAIS ─────────────────────────────────────────────
-const TelaInsights = ({ paciente, analise }) => {
+const TelaInsights = ({ paciente, analise, terapeutaId, terapeutaPerfil }) => {
   const sessoesList = paciente.sessoesList || [];
 
   if (sessoesList.length < 2) return (
@@ -4525,6 +4526,39 @@ const TelaInsights = ({ paciente, analise }) => {
     const soma = ate.filter(x => x.resultadoTarefa && x.resultadoTarefa.trim() !== "").length;
     return { sessao: `S${s.numero}`, adesao: parseFloat(((soma / (i + 1)) * 100).toFixed(1)) };
   });
+
+  // ── Análise longitudinal IA ──
+  const [analiseIA, setAnaliseIA] = useState(null);
+  const [carregandoAnalise, setCarregandoAnalise] = useState(false);
+  const [analiseCarregada, setAnaliseCarregada] = useState(false);
+
+  useEffect(() => {
+    if (!terapeutaId || !paciente?.id || terapeutaId === "demo") {
+      setAnaliseCarregada(true);
+      return;
+    }
+    buscarAnalise(terapeutaId, paciente.id)
+      .then(a => { setAnaliseIA(a); setAnaliseCarregada(true); })
+      .catch(() => setAnaliseCarregada(true));
+  }, [paciente?.id, terapeutaId]);
+
+  const sessaoAtual = sessoesList.length;
+  const temNovasSessoes = !analiseIA || sessaoAtual > (analiseIA.sessoes_count || 0);
+  const sessoesSinceDelta = analiseIA ? sessaoAtual - (analiseIA.sessoes_count || 0) : sessaoAtual;
+
+  async function handleGerarAnalise() {
+    if (!temNovasSessoes) return;
+    setCarregandoAnalise(true);
+    try {
+      const resultado = await gerarAnaliseLongitudinal(paciente, sessoesList);
+      await salvarAnalise(terapeutaId, paciente.id, resultado, sessaoAtual, resultado.geradoPor || 'gemini');
+      setAnaliseIA({ conteudo: resultado, sessoes_count: sessaoAtual, updated_at: new Date().toISOString() });
+    } catch {
+      alert('Erro ao gerar análise. Tente novamente.');
+    } finally {
+      setCarregandoAnalise(false);
+    }
+  }
 
   const exportarRelatorio = () => {
     const linhas = [
@@ -4663,6 +4697,129 @@ const TelaInsights = ({ paciente, analise }) => {
             </AreaChart>
           </ResponsiveContainer>
         )
+      )}
+
+      {/* ── Análise Clínica Longitudinal ── */}
+      {!terapeutaPerfil?.acesso_analise_longitudinal ? (
+        <div style={{ background:"#f8fafc", border:"1px solid #f1f5f9", borderRadius:12,
+          padding:"32px 24px", textAlign:"center", marginTop:24 }}>
+          <p style={{ fontSize:15, fontWeight:600, color:"#1e293b", marginBottom:8 }}>
+            Análise Clínica Longitudinal
+          </p>
+          <p style={{ fontSize:13, color:"#94a3b8", marginBottom:16 }}>
+            Disponível no plano Pro. Sistematiza padrões do histórico completo
+            do paciente — o que só é visível quando se olha o conjunto.
+          </p>
+          <span style={{ fontSize:12, background:"#eef2ff", color:"#6366f1",
+            padding:"4px 12px", borderRadius:20, fontWeight:600 }}>
+            Recurso Pro
+          </span>
+        </div>
+      ) : (
+        <div style={{ marginTop:24 }}>
+          {/* Cabeçalho */}
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16 }}>
+            <div>
+              <p style={{ fontSize:14, fontWeight:600, color:"#1e293b", margin:0 }}>
+                Análise Clínica Longitudinal
+              </p>
+              <p style={{ fontSize:12, color:"#94a3b8", margin:"2px 0 0" }}>
+                {analiseIA
+                  ? `Gerada em ${new Date(analiseIA.updated_at || analiseIA.created_at).toLocaleDateString("pt-BR")} · ${analiseIA.sessoes_count} sessões`
+                  : "Ainda não gerada para este paciente"}
+              </p>
+            </div>
+            <button
+              onClick={handleGerarAnalise}
+              disabled={!temNovasSessoes || carregandoAnalise || !terapeutaId || terapeutaId === "demo"}
+              title={!temNovasSessoes
+                ? "Nenhuma sessão nova desde a última análise"
+                : `${sessoesSinceDelta} nova(s) sessão(ões) desde a última análise`}
+              style={{
+                padding:"7px 16px", borderRadius:8, fontSize:13, fontWeight:600,
+                border:"1.5px solid",
+                borderColor: temNovasSessoes ? "#6366f1" : "#e2e8f0",
+                background: temNovasSessoes ? "#eef2ff" : "#f8fafc",
+                color: temNovasSessoes ? "#6366f1" : "#94a3b8",
+                cursor: temNovasSessoes && !carregandoAnalise ? "pointer" : "not-allowed",
+                whiteSpace:"nowrap",
+              }}>
+              {carregandoAnalise
+                ? "Analisando..."
+                : analiseIA
+                  ? temNovasSessoes
+                    ? `↻ Atualizar (${sessoesSinceDelta} nova${sessoesSinceDelta > 1 ? "s" : ""})`
+                    : "✓ Atualizada"
+                  : "✦ Gerar análise"}
+            </button>
+          </div>
+
+          {/* Conteúdo */}
+          {!analiseCarregada ? (
+            <div style={{ padding:"32px", textAlign:"center", color:"#94a3b8", fontSize:13 }}>
+              Carregando...
+            </div>
+          ) : !analiseIA ? (
+            <div style={{ background:"#f8fafc", border:"1px solid #f1f5f9", borderRadius:12,
+              padding:"32px 24px", textAlign:"center" }}>
+              <p style={{ fontSize:13, color:"#94a3b8", margin:0 }}>
+                Clique em "✦ Gerar análise" para sistematizar o histórico completo deste paciente.
+              </p>
+            </div>
+          ) : (
+            <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+              {[
+                { key:"evolucaoCaso",          icon:"📍", titulo:"Evolução do caso",              tipo:"texto" },
+                { key:"padroesPresistentes",   icon:"🔁", titulo:"Padrões persistentes",          tipo:"lista_objetos" },
+                { key:"pontosAtencao",         icon:"⚠️", titulo:"Pontos de atenção",             tipo:"lista" },
+                { key:"hipoteses",             icon:"🔍", titulo:"Hipóteses a explorar",          tipo:"lista" },
+                { key:"direcaoProximosCiclos", icon:"🎯", titulo:"Direção para os próximos ciclos", tipo:"texto" },
+              ].map(({ key, icon, titulo, tipo }) => {
+                const valor = analiseIA.conteudo?.[key];
+                if (!valor) return null;
+                return (
+                  <div key={key} style={{ background:"#fff", border:"1px solid #f1f5f9", borderRadius:12, padding:"18px 20px" }}>
+                    <p style={{ fontSize:13, fontWeight:600, color:"#1e293b", marginBottom:10 }}>
+                      {icon} {titulo}
+                    </p>
+                    {tipo === "texto" && (
+                      <p style={{ fontSize:13, color:"#475569", lineHeight:1.7, margin:0, whiteSpace:"pre-wrap" }}>
+                        {valor}
+                      </p>
+                    )}
+                    {tipo === "lista" && Array.isArray(valor) && (
+                      <ul style={{ margin:0, paddingLeft:18 }}>
+                        {valor.map((item, i) => (
+                          <li key={i} style={{ fontSize:13, color:"#475569", lineHeight:1.7, marginBottom:4 }}>{item}</li>
+                        ))}
+                      </ul>
+                    )}
+                    {tipo === "lista_objetos" && Array.isArray(valor) && (
+                      <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                        {valor.map((p, i) => (
+                          <div key={i} style={{ background:"#f8fafc", borderRadius:8, padding:"10px 14px" }}>
+                            <p style={{ fontSize:13, fontWeight:600, color:"#1e293b", margin:"0 0 2px" }}>
+                              {p.padrao}
+                              <span style={{ fontWeight:400, color:"#94a3b8", marginLeft:8, fontSize:12 }}>
+                                {p.frequencia}
+                              </span>
+                            </p>
+                            {p.contexto && (
+                              <p style={{ fontSize:12, color:"#64748b", margin:"2px 0" }}>Contexto: {p.contexto}</p>
+                            )}
+                            {p.indicacao && (
+                              <p style={{ fontSize:12, color:"#6366f1", margin:0 }}>{p.indicacao}</p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       )}
 
     </div>
@@ -6478,7 +6635,7 @@ export default function App() {
               {aba === "mural" && <TelaMural paciente={paciente} />}
               {aba === "plano" && <TelaPlano paciente={paciente} isMobile={isMobile} terapeutaId={terapeutaId} onAgendar={abrirAgendamento} proximaSessao={proxLabel} terapeutaPerfil={terapeutaPerfil} />}
               {aba === "importar" && <TelaImportar paciente={paciente} isMobile={isMobile} terapeutaId={terapeutaId} onSessaoSalva={handleSessaoSalva} agendamentos={agendamentos} onAgendamentoRealizado={id => setAgendamentos(prev => prev.map(a => a.id === id ? { ...a, status:"realizado" } : a))} />}
-              {aba === "insights" && <TelaInsights paciente={paciente} analise={analisarPadroes(paciente.sessoesList)} />}
+              {aba === "insights" && <TelaInsights paciente={paciente} analise={analisarPadroes(paciente.sessoesList)} terapeutaId={terapeutaId} terapeutaPerfil={terapeutaPerfil} />}
               {aba === "perfil" && <TelaPerfil paciente={paciente} isMobile={isMobile} terapeutaId={terapeutaId} terapeutaNome={terapeutaNome} terapeutaEmail={sessaoAuth?.user?.email} onAtualizar={handleAtualizarPaciente} onExcluir={handleExcluirPaciente} />}
             </>
           )}
@@ -6936,7 +7093,7 @@ export default function App() {
               {aba === "mural" && <TelaMural paciente={paciente} />}
               {aba === "plano" && <TelaPlano key={paciente.id} paciente={paciente} terapeutaId={terapeutaId} onAgendar={abrirAgendamento} proximaSessao={proxLabel} terapeutaPerfil={terapeutaPerfil} />}
               {aba === "importar" && <TelaImportar paciente={paciente} terapeutaId={terapeutaId} onSessaoSalva={handleSessaoSalva} agendamentos={agendamentos} onAgendamentoRealizado={id => setAgendamentos(prev => prev.map(a => a.id === id ? { ...a, status:"realizado" } : a))} />}
-              {aba === "insights" && <TelaInsights paciente={paciente} analise={analisarPadroes(paciente.sessoesList)} />}
+              {aba === "insights" && <TelaInsights paciente={paciente} analise={analisarPadroes(paciente.sessoesList)} terapeutaId={terapeutaId} terapeutaPerfil={terapeutaPerfil} />}
               {aba === "perfil" && <TelaPerfil paciente={paciente} terapeutaId={terapeutaId} terapeutaNome={terapeutaNome} terapeutaEmail={sessaoAuth?.user?.email} onAtualizar={handleAtualizarPaciente} onExcluir={handleExcluirPaciente} />}
             </>
           )}

@@ -4,7 +4,7 @@ export async function buscarTerapeuta(id) {
   if (!hasSupabase) return { data: null, error: null };
   const { data, error } = await supabase
     .from('terapeutas')
-    .select('nome, email, telefone, crp, onboarding_concluido, janela_contexto')
+    .select('nome, email, telefone, crp, onboarding_concluido, janela_contexto, acesso_analise_longitudinal')
     .eq('id', id)
     .maybeSingle();
   return { data, error };
