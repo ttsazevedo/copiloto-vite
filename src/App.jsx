@@ -4700,7 +4700,7 @@ const TelaInsights = ({ paciente, analise, terapeutaId, terapeutaPerfil }) => {
       )}
 
       {/* ── Análise Clínica Longitudinal ── */}
-      {!terapeutaPerfil?.acesso_analise_longitudinal ? (
+      {terapeutaPerfil?.acesso_analise_longitudinal === false ? (
         <div style={{ background:"#f8fafc", border:"1px solid #f1f5f9", borderRadius:12,
           padding:"32px 24px", textAlign:"center", marginTop:24 }}>
           <p style={{ fontSize:15, fontWeight:600, color:"#1e293b", marginBottom:8 }}>
