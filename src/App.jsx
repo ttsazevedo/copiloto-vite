@@ -16,6 +16,7 @@ import { buscarAuditLogPaciente, formatarEntradaLog } from "./services/auditoria
 import { exportarJSON, exportarCSV } from "./services/exportacao.js";
 import { listarHumorPaciente, buscarUltimoHumorPorPacientes } from "./services/humor_service.js";
 import { buscarTerapeuta, atualizarTerapeuta, marcarOnboardingConcluido } from "./services/terapeutas.js";
+import { exportarPlanoPDF } from "./utils/exportarPlanoPDF.js";
 
 // ─── IDENTIDADE VINCULI ───────────────────────────────────────────────────────
 // Paleta de marca
@@ -2190,6 +2191,7 @@ const TelaPlano = ({ paciente, isMobile = false, terapeutaId, onAgendar, proxima
   const [erroEnvioTarefa, setErroEnvioTarefa] = useState("");
   const [planoConfirmado, setPlanoConfirmado] = useState(false);
   const [confirmando, setConfirmando] = useState(false);
+  const [exportandoPDF, setExportandoPDF] = useState(false);
 
   const plano = planoMock ?? planoCurrent;
 
@@ -2879,6 +2881,30 @@ const TelaPlano = ({ paciente, isMobile = false, terapeutaId, onAgendar, proxima
           <div style={{ fontSize:13, color:"#78350f", lineHeight:1.6 }}>{obsCustom}</div>
         )}
       </div>
+
+      {/* Exportar PDF */}
+      {plano && (
+        <div style={{ display:"flex", justifyContent:"flex-end", marginBottom:8 }}>
+          <button
+            disabled={exportandoPDF}
+            onClick={async () => {
+              setExportandoPDF(true);
+              try {
+                await exportarPlanoPDF(plano, paciente, terapeutaPerfil);
+              } catch {
+                alert("Não foi possível gerar o PDF. Tente novamente.");
+              } finally {
+                setExportandoPDF(false);
+              }
+            }}
+            style={{ background:"#fff", border:"1.5px solid #e2e8f0", color:"#475569",
+              fontSize:13, padding:"6px 14px", borderRadius:8,
+              cursor: exportandoPDF ? "default" : "pointer",
+              fontWeight:500, fontFamily:"inherit", opacity: exportandoPDF ? 0.6 : 1 }}>
+            {exportandoPDF ? "Gerando..." : "⬇ PDF"}
+          </button>
+        </div>
+      )}
 
       {/* Confirmar plano */}
       {plano && planoCurrent?.id && terapeutaId && terapeutaId !== "demo" && (
