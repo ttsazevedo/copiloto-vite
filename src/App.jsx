@@ -620,7 +620,7 @@ const TelaPacientes = ({ pacientes: pacientesProps, onSelect, onNovoPaciente, pa
     const riscoCor = { baixo:"#10b981", medio:"#f59e0b", alto:"#ef4444" }[p.risco];
 
     if (!menuAberto) return (
-      <div key={p.id} onClick={() => onSelect(p)} title={p.nome}
+      <div key={p.id} onClick={() => { setHoverPaciente(null); clearTimeout(hoverTimer.current); onSelect(p); }} title={p.nome}
         style={{ display:"flex", justifyContent:"center", alignItems:"center",
           height:40, cursor:"pointer", borderRadius:8, margin:"0 4px",
           background: ativo ? `${p.cor}12` : "transparent",
@@ -635,7 +635,7 @@ const TelaPacientes = ({ pacientes: pacientesProps, onSelect, onNovoPaciente, pa
     );
 
     return (
-      <div key={p.id} onClick={() => onSelect(p)}
+      <div key={p.id} onClick={() => { setHoverPaciente(null); clearTimeout(hoverTimer.current); onSelect(p); }}
         onMouseEnter={e => iniciarHover(p, e)}
         onMouseLeave={encerrarHover}
         style={{ display:"flex", alignItems:"center", gap:8, height:40,
@@ -952,7 +952,7 @@ const TelaPacientes = ({ pacientes: pacientesProps, onSelect, onNovoPaciente, pa
       )}
 
       {/* Popover hover card */}
-      {hoverPaciente && (
+      {hoverPaciente && menuAberto && (
         <div
           onMouseEnter={() => clearTimeout(hoverTimer.current)}
           onMouseLeave={encerrarHover}
