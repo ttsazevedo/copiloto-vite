@@ -74,10 +74,10 @@ export async function exportarPlanoPDF(plano, paciente, terapeutaPerfil) {
     : '';
 
   const html = `
-    <div style="padding:36px;font-family:Arial,sans-serif;color:#1e293b;font-size:12px;line-height:1.6;width:794px;box-sizing:border-box;background:#fff;">
+    <div style="padding:36px 36px 56px 36px;font-family:Arial,sans-serif;color:#1e293b;font-size:12px;line-height:1.6;width:794px;box-sizing:border-box;background:#fff;">
 
       <div style="background:#6366f1;color:white;padding:22px 24px;border-radius:10px;margin-bottom:18px;">
-        <div style="font-size:18px;font-weight:700;margin-bottom:2px;">Copiloto Terapeuta</div>
+        <div style="font-size:18px;font-weight:700;margin-bottom:2px;">Vinculi</div>
         <div style="font-size:12px;opacity:0.85;">Plano de Sessão</div>
         ${terapeutaLine}
         <div style="font-size:10px;opacity:0.7;margin-top:4px;">Gerado em ${hoje}</div>
@@ -120,7 +120,7 @@ export async function exportarPlanoPDF(plano, paciente, terapeutaPerfil) {
 
       <div style="margin-top:20px;padding:12px 14px;border-top:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center;">
         <div style="font-size:10px;color:#94a3b8;max-width:65%;">
-          Documento gerado pelo Copiloto Terapeuta. Uso restrito ao profissional responsável.
+          Documento gerado pelo Vinculi — Elo entre terapeuta e paciente.<br/>Uso restrito ao profissional responsável.
         </div>
         <div style="font-size:11px;color:#64748b;font-weight:600;">
           Duração sugerida: ${esc(plano.duracaoSugerida || '50 min')}
@@ -150,16 +150,17 @@ export async function exportarPlanoPDF(plano, paciente, terapeutaPerfil) {
     const pageH = pdf.internal.pageSize.getHeight();
     const imgW = pageW;
     const imgH = (canvas.height * pageW) / canvas.width;
+    const sliceH = pageH - 8; // 8mm de margem de segurança na quebra de página
 
     let posY = 0;
     pdf.addImage(imgData, 'PNG', 0, posY, imgW, imgH);
-    let remaining = imgH - pageH;
+    let remaining = imgH - sliceH;
 
     while (remaining > 0) {
-      posY -= pageH;
+      posY -= sliceH;
       pdf.addPage();
       pdf.addImage(imgData, 'PNG', 0, posY, imgW, imgH);
-      remaining -= pageH;
+      remaining -= sliceH;
     }
 
     pdf.save(nomeArquivo);
