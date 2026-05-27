@@ -17,6 +17,7 @@ import { exportarJSON, exportarCSV } from "./services/exportacao.js";
 import { listarHumorPaciente, buscarUltimoHumorPorPacientes } from "./services/humor_service.js";
 import { buscarTerapeuta, atualizarTerapeuta, marcarOnboardingConcluido } from "./services/terapeutas.js";
 import { exportarPlanoPDF } from "./utils/exportarPlanoPDF.js";
+import { LineChart, Line, BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 
 // ─── IDENTIDADE VINCULI ───────────────────────────────────────────────────────
 // Paleta de marca
@@ -4470,19 +4471,60 @@ const TelaMural = ({ paciente }) => {
 
 // ─── TELA: INSIGHTS LONGITUDINAIS ─────────────────────────────────────────────
 const TelaInsights = ({ paciente, analise }) => {
-  if (!analise) return (
-    <div style={{ padding:"48px 28px", textAlign:"center", color:"#94a3b8" }}>
+  const sessoesList = paciente.sessoesList || [];
+
+  if (sessoesList.length < 2) return (
+    <div style={{ textAlign:"center", padding:"48px 24px", color:"#94a3b8" }}>
       <div style={{ fontSize:32, marginBottom:12 }}>📊</div>
-      <div style={{ fontSize:15, fontWeight:700, color:"#2C302E", marginBottom:6 }}>Dados insuficientes</div>
-      <div style={{ fontSize:13 }}>São necessárias pelo menos 2 sessões registradas para gerar insights.</div>
+      <p style={{ fontSize:15, marginBottom:8, fontWeight:600, color:"#2C302E" }}>Dados insuficientes para gráficos</p>
+      <p style={{ fontSize:13 }}>Registre ao menos 2 sessões para visualizar a evolução do paciente.</p>
     </div>
   );
 
-  const { topDistorcoes, humores, tarefasConcluidas, tarefasParciais, tarefasNaoFeitas, alertas } = analise;
-  const totalSessoes = paciente.sessoesList.length;
-  const totalComTarefa = tarefasConcluidas + tarefasParciais + tarefasNaoFeitas;
-  const pctCompletas = totalComTarefa > 0 ? Math.round((tarefasConcluidas / totalComTarefa) * 100) : 0;
-  const ultimaSessaoAlerta = paciente.sessoesList.find(s => s.alertas && s.alertas.length > 0);
+  const { topDistorcoes, tarefasConcluidas, tarefasParciais, tarefasNaoFeitas, alertas } = analise || {};
+  const totalSessoes = sessoesList.length;
+  const totalComTarefa = (tarefasConcluidas || 0) + (tarefasParciais || 0) + (tarefasNaoFeitas || 0);
+  const pctCompletas = totalComTarefa > 0 ? Math.round(((tarefasConcluidas || 0) / totalComTarefa) * 100) : 0;
+  const ultimaSessaoAlerta = sessoesList.find(s => s.alertas && s.alertas.length > 0);
+
+  // ── Card 2: média humor_fim últimas 5 sessões
+  const ultimas5 = sessoesList.slice(0, 5);
+  const humorFimValidos = ultimas5.map(s => parseFloat(s.humor_fim)).filter(v => !isNaN(v) && v !== null);
+  const mediaHumorFim = humorFimValidos.length > 0
+    ? (humorFimValidos.reduce((a, b) => a + b, 0) / humorFimValidos.length).toFixed(1)
+    : null;
+
+  // ── Card 3: distorção mais frequente
+  const freqDistAll = {};
+  sessoesList.forEach(s => (s.distorcoes || []).forEach(d => { freqDistAll[d] = (freqDistAll[d] || 0) + 1; }));
+  const topDistNome = Object.entries(freqDistAll).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+  const topDistTrunc = topDistNome && topDistNome.length > 18 ? topDistNome.slice(0, 18) + "…" : topDistNome;
+
+  // ── Card 4: taxa de adesão
+  const comResultado = sessoesList.filter(s => s.resultadoTarefa && s.resultadoTarefa.trim() !== "").length;
+  const taxaAdesao = totalSessoes > 0 ? Math.round((comResultado / totalSessoes) * 100) : null;
+
+  // ── Gráfico 1: evolução do humor (ordem cronológica)
+  const sessoesCron = sessoesList.slice().reverse();
+  const dadosHumor = sessoesCron.map(s => ({
+    sessao: `S${s.numero}`,
+    humor_inicio: parseFloat(s.humor_inicio) || null,
+    humor_fim: parseFloat(s.humor_fim) || null,
+  })).filter(d => d.humor_inicio !== null || d.humor_fim !== null);
+
+  // ── Gráfico 2: distorções top 6
+  const dadosDistorcoes = Object.entries(freqDistAll)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6)
+    .map(([nome, frequencia]) => ({ nome, frequencia }));
+  const alturaBarChart = Math.max(160, Math.min(280, dadosDistorcoes.length * 40));
+
+  // ── Gráfico 3: adesão acumulada
+  const dadosAdesao = sessoesCron.map((s, i) => {
+    const ate = sessoesCron.slice(0, i + 1);
+    const soma = ate.filter(x => x.resultadoTarefa && x.resultadoTarefa.trim() !== "").length;
+    return { sessao: `S${s.numero}`, adesao: parseFloat(((soma / (i + 1)) * 100).toFixed(1)) };
+  });
 
   const exportarRelatorio = () => {
     const linhas = [
@@ -4490,16 +4532,16 @@ const TelaInsights = ({ paciente, analise }) => {
       `Gerado em ${new Date().toLocaleDateString("pt-BR")}`,
       "",
       `Total de sessões analisadas: ${totalSessoes}`,
-      `Tarefas completas: ${pctCompletas}%`,
+      `Adesão às tarefas: ${taxaAdesao !== null ? taxaAdesao + "%" : "—"}`,
       "",
       "TOP DISTORÇÕES:",
-      ...topDistorcoes.map(d => `  • ${d.nome} — ${d.count}x (${d.percentual}% das sessões)`),
+      ...Object.entries(freqDistAll).sort((a, b) => b[1] - a[1]).slice(0, 5)
+        .map(([nome, count]) => `  • ${nome} — ${count}x`),
       "",
       "ALERTAS AUTOMÁTICOS:",
-      ...(alertas.length ? alertas.map(a => `  ⚠️ ${a.msg}`) : ["  Nenhum alerta identificado."]),
+      ...((alertas || []).length ? (alertas || []).map(a => `  ⚠️ ${a.msg}`) : ["  Nenhum alerta identificado."]),
     ];
-    const texto = linhas.join("\n");
-    const blob = new Blob([texto], { type: "text/plain;charset=utf-8" });
+    const blob = new Blob([linhas.join("\n")], { type:"text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -4508,20 +4550,20 @@ const TelaInsights = ({ paciente, analise }) => {
     URL.revokeObjectURL(url);
   };
 
-  // SVG da linha do tempo emocional
-  const svgW = 480, svgH = 80, padX = 32, padY = 10;
-  const hPoints = humores.slice().reverse();
-  const svgPts = hPoints.map((h, i) => {
-    const x = padX + (i / Math.max(hPoints.length - 1, 1)) * (svgW - padX * 2);
-    const y = padY + ((h.media / 100) * (svgH - padY * 2));
-    return { x, y, ...h };
-  });
-  const polyline = svgPts.map(p => `${p.x},${p.y}`).join(" ");
+  const cardGrafico = (titulo, subtitulo, children) => (
+    <div style={{ background:"#fff", border:"1px solid #f1f5f9", borderRadius:12, padding:"20px 24px", marginBottom:16 }}>
+      <div style={{ marginBottom:16 }}>
+        <p style={{ fontSize:14, fontWeight:600, color:"#1e293b", margin:0 }}>{titulo}</p>
+        <p style={{ fontSize:12, color:"#94a3b8", margin:"2px 0 0" }}>{subtitulo}</p>
+      </div>
+      {children}
+    </div>
+  );
 
   return (
     <div style={{ height:"100%", overflowY:"auto", padding:"24px 28px" }}>
 
-      {/* ── Seção 1: Header ── */}
+      {/* ── Header ── */}
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:24 }}>
         <div>
           <div style={{ fontSize:11, fontWeight:700, color:"#94a3b8", textTransform:"uppercase",
@@ -4540,86 +4582,88 @@ const TelaInsights = ({ paciente, analise }) => {
         </button>
       </div>
 
-      {/* ── Seção 2: Cards de métricas ── */}
+      {/* ── Métricas rápidas ── */}
       <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12, marginBottom:20 }}>
         {[
-          { label:"Total de sessões", val: totalSessoes, sub:"registradas", cor:"#E28743" },
-          { label:"Tarefas completas", val: `${pctCompletas}%`, sub:`${tarefasConcluidas} de ${totalComTarefa}`, cor:"#10b981" },
-          { label:"Distorção principal", val: topDistorcoes[0]?.nome ?? "—", sub: topDistorcoes[0] ? `${topDistorcoes[0].percentual}% das sessões` : "dados insuficientes", cor:"#f59e0b" },
-          { label:"Última sessão c/ alerta", val: ultimaSessaoAlerta ? `Sessão ${ultimaSessaoAlerta.numero}` : "Nenhuma", sub: ultimaSessaoAlerta ? ultimaSessaoAlerta.data : "sem alertas recentes", cor:"#ef4444" },
-        ].map(({ label, val, sub, cor }) => (
-          <div key={label} style={{ background:"#fff", borderRadius:12, padding:"14px 16px",
-            border:"1px solid #f1f5f9", borderTop:`3px solid ${cor}` }}>
-            <div style={{ fontSize:15, fontWeight:800, color:"#2C302E", marginBottom:2, lineHeight:1.3 }}>{val}</div>
-            <div style={{ fontSize:10, fontWeight:700, color:"#94a3b8", textTransform:"uppercase",
-              letterSpacing:"0.05em", marginBottom:2 }}>{label}</div>
-            <div style={{ fontSize:11, color:"#cbd5e1" }}>{sub}</div>
+          { label:"sessões realizadas", val: totalSessoes, cor:"#E28743" },
+          { label:"humor médio (últimas 5)", val: mediaHumorFim !== null ? mediaHumorFim : "—", cor:"#6366f1" },
+          { label:"distorção mais frequente", val: topDistTrunc ?? "—", cor:"#f59e0b" },
+          { label:"adesão às tarefas", val: taxaAdesao !== null ? `${taxaAdesao}%` : "—", cor:"#10b981" },
+        ].map(({ label, val, cor }) => (
+          <div key={label} style={{ background:"#f8fafc", border:"1px solid #f1f5f9", borderRadius:12,
+            padding:"16px 20px" }}>
+            <div style={{ fontSize:22, fontWeight:600, color:"#1e293b", marginBottom:4, lineHeight:1.2 }}>{val}</div>
+            <div style={{ fontSize:11, color:"#94a3b8", textTransform:"uppercase", letterSpacing:"0.06em" }}>{label}</div>
           </div>
         ))}
       </div>
 
-      {/* ── Seção 3: Alertas automáticos ── */}
-      {alertas.length > 0 && (
+      {/* ── Alertas ── */}
+      {(alertas || []).length > 0 && (
         <div style={{ background:"#fff1f2", border:"1px solid #fecdd3", borderRadius:12,
-          padding:"14px 18px", marginBottom:20 }}>
-          <div style={{ fontSize:12, fontWeight:700, color:"#9f1239", marginBottom:10 }}>
-            ⚠️ Alertas automáticos
-          </div>
+          padding:"14px 18px", marginBottom:16 }}>
+          <div style={{ fontSize:12, fontWeight:700, color:"#9f1239", marginBottom:10 }}>⚠️ Alertas automáticos</div>
           {alertas.map((a, i) => (
-            <div key={i} style={{ fontSize:13, color:"#be123c", marginBottom: i < alertas.length - 1 ? 6 : 0 }}>
-              • {a.msg}
-            </div>
+            <div key={i} style={{ fontSize:13, color:"#be123c", marginBottom: i < alertas.length - 1 ? 6 : 0 }}>• {a.msg}</div>
           ))}
         </div>
       )}
 
-      {/* ── Seção 4: Top distorções ── */}
-      <div style={{ background:"#fff", border:"1px solid #f1f5f9", borderRadius:12,
-        padding:"18px 20px", marginBottom:20 }}>
-        <div style={{ fontSize:11, fontWeight:700, color:"#94a3b8", textTransform:"uppercase",
-          letterSpacing:"0.07em", marginBottom:14 }}>Top distorções cognitivas</div>
-        {topDistorcoes.length === 0 && (
-          <div style={{ fontSize:13, color:"#94a3b8" }}>Nenhuma distorção registrada nas sessões.</div>
-        )}
-        {topDistorcoes.map(d => (
-          <div key={d.nome} style={{ marginBottom:12 }}>
-            <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
-              <span style={{ fontSize:13, color:"#334155", fontWeight:600 }}>{d.nome}</span>
-              <span style={{ fontSize:12, fontWeight:700, color:"#f59e0b" }}>{d.percentual}% · {d.count}x</span>
-            </div>
-            <div style={{ background:"#f1f5f9", borderRadius:99, height:6, overflow:"hidden" }}>
-              <div style={{ width:`${d.percentual}%`, background:"#f59e0b", height:"100%",
-                borderRadius:99, transition:"width 0.8s ease" }}/>
-            </div>
-          </div>
-        ))}
-      </div>
+      {/* ── Gráfico 1: Evolução do humor ── */}
+      {cardGrafico("Evolução do humor", "Início vs. fim de cada sessão",
+        dadosHumor.length < 2 ? (
+          <div style={{ fontSize:13, color:"#94a3b8" }}>Dados insuficientes. Registre humor_inicio e humor_fim nas sessões.</div>
+        ) : (
+          <ResponsiveContainer width="100%" height={200}>
+            <LineChart data={dadosHumor} margin={{ top:4, right:8, left:-16, bottom:0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+              <XAxis dataKey="sessao" tick={{ fontSize:11, fill:"#94a3b8" }} />
+              <YAxis domain={[0, 10]} ticks={[0,2,4,6,8,10]} tick={{ fontSize:11, fill:"#94a3b8" }} />
+              <Tooltip formatter={(v, n) => [`${v}/10`, n]} />
+              <Legend wrapperStyle={{ fontSize:12 }} />
+              <Line type="monotone" dataKey="humor_inicio" name="Início" stroke="#94a3b8"
+                strokeDasharray="4 4" strokeWidth={1.5} dot={{ r:3 }} connectNulls />
+              <Line type="monotone" dataKey="humor_fim" name="Fim" stroke="#6366f1"
+                strokeWidth={2} dot={{ r:3 }} connectNulls />
+            </LineChart>
+          </ResponsiveContainer>
+        )
+      )}
 
-      {/* ── Seção 5: Linha do tempo emocional ── */}
-      <div style={{ background:"#fff", border:"1px solid #f1f5f9", borderRadius:12,
-        padding:"18px 20px", marginBottom:20 }}>
-        <div style={{ fontSize:11, fontWeight:700, color:"#94a3b8", textTransform:"uppercase",
-          letterSpacing:"0.07em", marginBottom:14 }}>Intensidade emocional média por sessão</div>
-        {hPoints.length < 2 ? (
+      {/* ── Gráfico 2: Distorções cognitivas ── */}
+      {cardGrafico("Distorções cognitivas", "Frequência por sessão registrada",
+        dadosDistorcoes.length === 0 ? (
+          <div style={{ fontSize:13, color:"#94a3b8" }}>Nenhuma distorção registrada nas sessões.</div>
+        ) : (
+          <ResponsiveContainer width="100%" height={alturaBarChart}>
+            <BarChart layout="vertical" data={dadosDistorcoes} margin={{ top:0, right:16, left:0, bottom:0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
+              <XAxis type="number" allowDecimals={false} tick={{ fontSize:11, fill:"#94a3b8" }} />
+              <YAxis type="category" dataKey="nome" width={160} tick={{ fontSize:12, fill:"#334155" }} />
+              <Tooltip formatter={(v) => [`${v} sessão(ões)`, "Frequência"]} />
+              <Bar dataKey="frequencia" fill="#e28743" radius={[0,4,4,0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        )
+      )}
+
+      {/* ── Gráfico 3: Adesão às tarefas ── */}
+      {cardGrafico("Adesão às tarefas", "Percentual acumulado ao longo do processo",
+        dadosAdesao.length < 2 ? (
           <div style={{ fontSize:13, color:"#94a3b8" }}>Dados insuficientes para o gráfico.</div>
         ) : (
-          <div style={{ overflowX:"auto" }}>
-            <svg width={svgW} height={svgH + 24} style={{ display:"block" }}>
-              <polyline points={polyline} fill="none" stroke={paciente.cor}
-                strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" opacity={0.8}/>
-              {svgPts.map((p, i) => (
-                <g key={i}>
-                  <circle cx={p.x} cy={p.y} r={4} fill={paciente.cor} opacity={0.9}/>
-                  <text x={p.x} y={svgH + 20} textAnchor="middle"
-                    style={{ fontSize:10, fill:"#94a3b8", fontFamily:"inherit" }}>
-                    S{p.num}
-                  </text>
-                </g>
-              ))}
-            </svg>
-          </div>
-        )}
-      </div>
+          <ResponsiveContainer width="100%" height={160}>
+            <AreaChart data={dadosAdesao} margin={{ top:4, right:8, left:-16, bottom:0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+              <XAxis dataKey="sessao" tick={{ fontSize:11, fill:"#94a3b8" }} />
+              <YAxis domain={[0,100]} tickFormatter={v => `${v}%`} tick={{ fontSize:11, fill:"#94a3b8" }} />
+              <Tooltip formatter={(v) => [`${Math.round(v)}%`, "Adesão acumulada"]} />
+              <Area type="monotone" dataKey="adesao" name="Adesão acumulada"
+                stroke="#10b981" fill="#d1fae5" strokeWidth={2} />
+            </AreaChart>
+          </ResponsiveContainer>
+        )
+      )}
 
     </div>
   );
