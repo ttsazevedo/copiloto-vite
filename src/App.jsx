@@ -2303,6 +2303,14 @@ const TelaPlano = ({ paciente, isMobile = false, terapeutaId, onAgendar, proxima
 
   if (!plano) {
     const podeGerar = typeof paciente.id === "string" && (paciente.sessoesList?.length ?? 0) > 0;
+    const _janelaBadge = (terapeutaPerfil != null ? terapeutaPerfil.janela_contexto : null) || 3;
+    const _nBadge = Math.min((paciente.sessoesList || []).length, _janelaBadge);
+    const badgeContexto = _nBadge > 0
+      ? <span style={{ fontSize:11, fontWeight:600, color:"#6366f1", background:"#eef2ff",
+          border:"1px solid #c7d2fe", borderRadius:10, padding:"2px 9px", whiteSpace:"nowrap" }}>
+          {_nBadge === 1 ? "1 sessão no contexto" : `${_nBadge} sessões no contexto`}
+        </span>
+      : null;
     return (
       <div style={{ padding: isMobile ? "20px 16px" : "48px 28px", height:"100%", overflowY:"auto" }}>
         <div style={{ textAlign:"center", color:"#94a3b8", maxWidth:440, margin:"0 auto" }}>
@@ -2313,7 +2321,7 @@ const TelaPlano = ({ paciente, isMobile = false, terapeutaId, onAgendar, proxima
                 Nenhum plano gerado para esta sessão
               </div>
               <div style={{ fontSize:13, marginBottom:24 }}>
-                Gere um plano personalizado com base nas últimas {Math.min(paciente.sessoesList.length, terapeutaPerfil?.janela_contexto || 3)} sessões registradas.
+                Gere um plano personalizado com base nas últimas {Math.min(paciente.sessoesList.length, _janelaBadge)} sessões registradas.
               </div>
               {erroIA && (
                 <div style={{ marginBottom:16, padding:"10px 14px", background:"#fff1f2",
@@ -2328,17 +2336,7 @@ const TelaPlano = ({ paciente, isMobile = false, terapeutaId, onAgendar, proxima
                     cursor: gerando ? "default" : "pointer" }}>
                   {gerando ? "Gerando plano…" : "🤖 Gerar plano com IA"}
                 </button>
-                {(() => {
-                  const janela = terapeutaPerfil?.janela_contexto || 3;
-                  const n = Math.min((paciente.sessoesList || []).length, janela);
-                  if (n === 0) return null;
-                  return (
-                    <span style={{ fontSize:11, fontWeight:600, color:"#6366f1", background:"#eef2ff",
-                      border:"1px solid #c7d2fe", borderRadius:10, padding:"2px 9px", whiteSpace:"nowrap" }}>
-                      {n === 1 ? "1 sessão no contexto" : `${n} sessões no contexto`}
-                    </span>
-                  );
-                })()}
+                {badgeContexto}
               </div>
               {providerIA && (
                 <div style={{ marginTop:8, fontSize:11, color:"#94a3b8" }}>
@@ -5431,7 +5429,7 @@ const TelaDashboard = ({ pacientesLista = [], agendamentos = [], terapeutaId, te
         .eq("terapeuta_id", terapeutaId)
         .gte("created_at", trintaDiasAtras.toISOString()),
       pIds.length > 0
-        ? supabase.from("registros_abcd").select("paciente_id").in("paciente_id", pIds).gte("created_at", seteDiasAtras.toISOString())
+        ? supabase.from("registros_abcd").select("paciente_id").in("paciente_id", pIds).gte("criado_em", seteDiasAtras.toISOString())
         : Promise.resolve({ data: [] }),
       supabase.from("planos").select("paciente_id, status, created_at")
         .eq("terapeuta_id", terapeutaId)
@@ -5466,6 +5464,9 @@ const TelaDashboard = ({ pacientesLista = [], agendamentos = [], terapeutaId, te
         statusPlanos: statusCounts,
         pacientesPorStatus,
       });
+      setCarregando(false);
+    }).catch(err => {
+      console.error('[dashboard]', err);
       setCarregando(false);
     });
   }, [terapeutaId, pacientesLista.length, agendamentos.length]);
@@ -6741,7 +6742,7 @@ export default function App() {
         {/* Barra de navegação superior */}
         <div style={{ background:"#fff", borderBottom:"1px solid #f1f5f9",
           padding:"0 28px", display:"flex", alignItems:"center",
-          height:56, flexShrink:0, gap:4 }}>
+          height:56, flexShrink:0, gap:4, position:"relative", zIndex:201 }}>
 
           {mostrarDashboard ? (
             <div style={{ display:"flex", alignItems:"center", gap:8 }}>

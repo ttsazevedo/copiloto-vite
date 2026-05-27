@@ -1,6 +1,6 @@
 // ─── SERVIÇO DE IA: Gemini (primário) → Claude (fallback) ───
 
-const GEMINI_MODEL = 'gemini-1.5-flash';
+const GEMINI_MODEL = 'gemini-2.0-flash';
 const CLAUDE_MODEL = 'claude-sonnet-4-6';
 
 // ─── VALIDAÇÃO DE JSON ───
