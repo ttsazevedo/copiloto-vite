@@ -4,15 +4,65 @@ import { supabase, hasSupabase, testarConexao } from "./services/supabase.js";
 import TelaLogin from "./components/TelaLogin.jsx";
 import TelaCarregando from "./components/TelaCarregando.jsx";
 import { extrairSessaoDeTexto, gerarPlanoSessao } from "./services/ia.js";
-import { salvarPlano, buscarPlano } from "./services/planos.js";
+import { salvarPlano, buscarPlano, atualizarPlano, buscarPlanoDaSessao, buscarPlanosEditados } from "./services/planos.js";
 import { testarChavesIA } from "./services/testarIA.js";
 import { listarSessoes, criarSessao } from "./services/sessoes.js";
-import { listarPacientes, atualizarPaciente, excluirPaciente, criarPaciente as criarPacienteService } from "./services/pacientes.js";
+import { listarPacientes, atualizarPaciente, deletarPaciente, restaurarPaciente, listarPacientesArquivados, criarPaciente as criarPacienteService } from "./services/pacientes.js";
 import { listarAgendamentos, criarAgendamento, atualizarAgendamento, cancelarAgendamento } from "./services/agendamentos.js";
 import { criarTarefa, listarTarefas } from "./services/tarefas.js";
 import { criarConvite, gerarLinkConvite, listarConvitesPaciente, revogarConvite } from "./services/convites.js";
 import { listarRegistrosDoPaciente } from "./services/registros.js";
-import { listarHumorPaciente } from "./services/humor_service.js";
+import { buscarAuditLogPaciente, formatarEntradaLog } from "./services/auditoria.js";
+import { exportarJSON, exportarCSV } from "./services/exportacao.js";
+import { listarHumorPaciente, buscarUltimoHumorPorPacientes } from "./services/humor_service.js";
+import { buscarTerapeuta, atualizarTerapeuta, marcarOnboardingConcluido } from "./services/terapeutas.js";
+
+// ─── IDENTIDADE VINCULI ───────────────────────────────────────────────────────
+// Paleta de marca
+const VINCULI = {
+  laranja:  "#E28743",
+  dourado:  "#EAB852",
+  rosa:     "#F1A7A6",
+  grafite:  "#2C302E",
+  branco:   "#FFFFFF",
+  laranjaHover: "#C97535",
+  rosaClaro: "#FDF0EF",
+};
+
+// Ícone isolado — duas formas orgânicas em abraço
+const VinculiIcon = ({ size = 32, dark = false }) => {
+  const c1 = dark ? "#FFFFFF" : VINCULI.laranja;
+  const c2 = dark ? "#FFFFFF" : VINCULI.dourado;
+  const c3 = dark ? "#FFFFFF" : VINCULI.rosa;
+  const op2 = dark ? 0.6 : 0.85;
+  return (
+    <svg width={size} height={Math.round(size * 0.82)} viewBox="0 0 44 36" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ flexShrink:0 }}>
+      {/* Forma 1 — Laranja Suave */}
+      <ellipse cx="18" cy="18" rx="14" ry="8.5" transform="rotate(-32 18 18)" fill={c1} opacity="0.92"/>
+      {/* Forma 2 — Amarelo Dourado */}
+      <ellipse cx="26" cy="18" rx="14" ry="8.5" transform="rotate(32 26 18)" fill={c2} opacity={op2}/>
+      {/* Centro — espaço terapêutico (Rosa Sereno) */}
+      <circle cx="22" cy="18" r="3.8" fill={c3} opacity="0.96"/>
+    </svg>
+  );
+};
+
+// Assinatura Preferencial — horizontal: ícone + wordmark
+const VinculiAssinatura = ({ size = "md", dark = false }) => {
+  const textColor = dark ? "#FFFFFF" : VINCULI.grafite;
+  const sizes = { sm: { icon: 22, font: 15, gap: 7 }, md: { icon: 30, font: 20, gap: 9 }, lg: { icon: 42, font: 28, gap: 12 } };
+  const s = sizes[size] || sizes.md;
+  return (
+    <div style={{ display:"flex", alignItems:"center", gap:s.gap, userSelect:"none" }}>
+      <VinculiIcon size={s.icon} dark={dark} />
+      <span style={{
+        fontFamily:"'Playfair Display', 'Lora', Georgia, serif",
+        fontSize:s.font, fontWeight:400, color:textColor,
+        letterSpacing:"0.04em", lineHeight:1,
+      }}>Vinculi</span>
+    </div>
+  );
+};
 
 // ─── HOOK DE BREAKPOINT ───────────────────────────────────────────────────────
 const useBreakpoint = () => {
@@ -30,7 +80,7 @@ const useBreakpoint = () => {
 // ─── BANCO DE PALAVRAS POR LINHA TEÓRICA ──────────────────────────────────────
 const BANCO_PALAVRAS = {
   tcc: {
-    label: "TCC", cor: "#6366f1",
+    label: "TCC", cor: "#E28743",
     categorias: {
       "Cognição": ["Pensamento automático","Crença central","Crença intermediária","Distorção cognitiva","Catastrofização","Leitura mental","Personalização","Generalização","Raciocínio emocional","Reestruturação"],
       "Comportamento": ["Exposição","Evitamento","Experimento comportamental","Comportamento-alvo","Análise funcional","Autocontrole","Modelagem","Plano de ação","Tarefa de casa","Monitoramento"],
@@ -426,7 +476,7 @@ const Badge = ({ children, tipo = "neutro" }) => {
     distorcao: { bg: "#fef3c7", cor: "#92400e" },
     alerta: { bg: "#fee2e2", cor: "#991b1b" },
     sucesso: { bg: "#d1fae5", cor: "#065f46" },
-    tecnica: { bg: "#ede9fe", cor: "#5b21b6" },
+    tecnica: { bg: "#FEF3E2", cor: "#C47535" },
     info: { bg: "#e0f2fe", cor: "#0c4a6e" },
   };
   const s = estilos[tipo] || estilos.neutro;
@@ -456,7 +506,7 @@ const RiscoTag = ({ nivel }) => {
   );
 };
 
-const BarraProgresso = ({ valor, cor = "#6366f1", altura = 6 }) => (
+const BarraProgresso = ({ valor, cor = "#E28743", altura = 6 }) => (
   <div style={{ background:"#f1f5f9", borderRadius:99, height:altura, overflow:"hidden" }}>
     <div style={{ width:`${valor}%`, background:cor, height:"100%", borderRadius:99,
       transition:"width 0.8s ease" }}/>
@@ -491,7 +541,7 @@ const HumorMini = ({ dados, cor }) => {
   );
 };
 
-const IntensidadeBar = ({ nome, valor, cor = "#6366f1" }) => (
+const IntensidadeBar = ({ nome, valor, cor = "#E28743" }) => (
   <div style={{ marginBottom:8 }}>
     <div style={{ display:"flex", justifyContent:"space-between", marginBottom:3 }}>
       <span style={{ fontSize:12, color:"#64748b" }}>{nome}</span>
@@ -507,10 +557,14 @@ const CORES_AVATAR = ["#6366f1","#0ea5e9","#10b981","#f59e0b","#ec4899","#8b5cf6
 const gerarIniciais = (nome) =>
   nome.trim().split(/\s+/).slice(0,2).map(p => p[0].toUpperCase()).join("");
 
-const TelaPacientes = ({ pacientes: pacientesProps, onSelect, onNovoPaciente, pacienteSelecionado, menuAberto, onClose, terapeutaId, modo = "pacientes", onAbrirAgendamento }) => {
+const TelaPacientes = ({ pacientes: pacientesProps, onSelect, onNovoPaciente, pacienteSelecionado, menuAberto, onClose, terapeutaId, modo = "pacientes", onAbrirAgendamento, onRestaurar, humorAlerta = new Map(), abrirModal = false, onAbrirModalConsumed, onIrParaImportar }) => {
   const [busca, setBusca] = useState("");
   const [novosPacientes, setNovosPacientes] = useState([]);
   const [modalAberto, setModalAberto] = useState(false);
+  const [modalArquivadosAberto, setModalArquivadosAberto] = useState(false);
+  const [arquivados, setArquivados] = useState([]);
+  const [carregandoArquivados, setCarregandoArquivados] = useState(false);
+  const [erroRestaurar, setErroRestaurar] = useState("");
   const [passoCriar, setPassoCriar] = useState(null);
   const [pacienteCriadoTemp, setPacienteCriadoTemp] = useState(null);
   const [formNome, setFormNome] = useState("");
@@ -518,10 +572,17 @@ const TelaPacientes = ({ pacientes: pacientesProps, onSelect, onNovoPaciente, pa
   const [formQueixa, setFormQueixa] = useState("");
   const [formLinha, setFormLinha] = useState("tcc");
   const [formRisco, setFormRisco] = useState("baixo");
+  const [formHistorico, setFormHistorico] = useState("primeira");
   const [secoesAbertas, setSecoesAbertas] = useState({ hoje: true, semana: false, semAgendamento: false });
   const [hoverPaciente, setHoverPaciente] = useState(null);
   const [hoverY, setHoverY] = useState(0);
+  const [erroCriar, setErroCriar] = useState("");
+  const [criando, setCriando] = useState(false);
   const hoverTimer = useRef(null);
+
+  useEffect(() => {
+    if (abrirModal) { setModalAberto(true); onAbrirModalConsumed?.(); }
+  }, [abrirModal]);
 
   const iniciarHover = (p, e) => {
     clearTimeout(hoverTimer.current);
@@ -535,7 +596,7 @@ const TelaPacientes = ({ pacientes: pacientesProps, onSelect, onNovoPaciente, pa
     hoverTimer.current = setTimeout(() => setHoverPaciente(null), 150);
   };
 
-  const base = pacientesProps ?? PACIENTES;
+  const base = pacientesProps ?? [];
   const todos = [...base, ...novosPacientes];
 
   const filtrados = todos.filter(p =>
@@ -583,10 +644,24 @@ const TelaPacientes = ({ pacientes: pacientesProps, onSelect, onNovoPaciente, pa
           borderLeft: ativo ? `3px solid ${p.cor}` : "3px solid transparent",
           transition:"all 0.12s ease" }}>
         <Avatar iniciais={p.iniciais} cor={p.cor} tamanho={28} />
-        <div style={{ flex:1, minWidth:0, overflow:"hidden",
-          whiteSpace:"nowrap", textOverflow:"ellipsis",
-          fontSize:13, fontWeight:600, color:"#0f172a" }}>
-          {p.nome}
+        <div style={{ flex:1, minWidth:0, overflow:"hidden", display:"flex", flexDirection:"column", gap:1 }}>
+          <div style={{ whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis",
+            fontSize:13, fontWeight:600, color:"#2C302E" }}>
+            {p.nome}
+          </div>
+          {(() => {
+            const dias = humorAlerta.get(p.id);
+            if (dias === undefined || dias < 3) return null;
+            const label = dias >= 999 ? "sem registros" : `${dias} dias sem humor`;
+            return (
+              <span style={{ fontSize:10, fontWeight:600, color:"#f59e0b",
+                background:"#fffbeb", border:"1px solid #fde68a",
+                borderRadius:4, padding:"0px 5px", lineHeight:"14px",
+                display:"inline-block", width:"fit-content" }}>
+                ⚠️ {label}
+              </span>
+            );
+          })()}
         </div>
         <div style={{ display:"flex", alignItems:"center", gap:4, flexShrink:0 }}>
           {numAlertas > 0 && (
@@ -616,6 +691,8 @@ const TelaPacientes = ({ pacientes: pacientesProps, onSelect, onNovoPaciente, pa
 
   const criarPaciente = async () => {
     if (!formNome.trim()) return;
+    setErroCriar("");
+    setCriando(true);
     const camposDB = {
       nome: formNome.trim(),
       iniciais: gerarIniciais(formNome),
@@ -628,9 +705,15 @@ const TelaPacientes = ({ pacientes: pacientesProps, onSelect, onNovoPaciente, pa
     };
     let pacienteId = Date.now();
     if (terapeutaId && terapeutaId !== "demo") {
-      const { data } = await criarPacienteService(terapeutaId, camposDB);
+      const { data, error } = await criarPacienteService(terapeutaId, camposDB);
+      if (error) {
+        setErroCriar(error.message || "Erro ao salvar paciente. Verifique a conexão e tente novamente.");
+        setCriando(false);
+        return;
+      }
       if (data?.id) pacienteId = data.id;
     }
+    setCriando(false);
     const novo = {
       ...camposDB,
       id: pacienteId,
@@ -651,8 +734,11 @@ const TelaPacientes = ({ pacientes: pacientesProps, onSelect, onNovoPaciente, pa
       setNovosPacientes(prev => [...prev, novo]);
     }
     setFormNome(""); setFormIdade(""); setFormQueixa("");
-    setFormLinha("tcc"); setFormRisco("baixo");
-    if (onAbrirAgendamento) {
+    setFormLinha("tcc"); setFormRisco("baixo"); setFormHistorico("primeira");
+    if (formHistorico === "historico") {
+      setPacienteCriadoTemp(novo);
+      setPassoCriar("importar");
+    } else if (onAbrirAgendamento) {
       setPacienteCriadoTemp(novo);
       setPassoCriar("sucesso");
     } else {
@@ -678,7 +764,7 @@ const TelaPacientes = ({ pacientes: pacientesProps, onSelect, onNovoPaciente, pa
             onChange={e => setBusca(e.target.value)}
             placeholder="Buscar paciente ou queixa…"
             style={{ width:"100%", padding:"8px 12px", border:"1.5px solid #e2e8f0",
-              borderRadius:10, fontSize:13, color:"#0f172a", background:"#f8fafc",
+              borderRadius:10, fontSize:13, color:"#2C302E", background:"#f8fafc",
               outline:"none", boxSizing:"border-box" }}
           />
         </div>
@@ -741,7 +827,7 @@ const TelaPacientes = ({ pacientes: pacientesProps, onSelect, onNovoPaciente, pa
           {menuAberto ? (
             <div style={{ padding:"12px 16px 0" }}>
               <button onClick={() => setModalAberto(true)}
-                style={{ width:"100%", padding:"9px 0", background:"#6366f1", color:"#fff",
+                style={{ width:"100%", padding:"9px 0", background:"#E28743", color:"#fff",
                   border:"none", borderRadius:10, fontSize:13, fontWeight:700,
                   cursor:"pointer", letterSpacing:"0.02em" }}>
                 + Novo paciente
@@ -750,7 +836,7 @@ const TelaPacientes = ({ pacientes: pacientesProps, onSelect, onNovoPaciente, pa
           ) : (
             <div style={{ display:"flex", justifyContent:"center", padding:"10px 0" }}>
               <button onClick={() => setModalAberto(true)} title="Novo paciente"
-                style={{ width:36, height:36, background:"#6366f1", color:"#fff",
+                style={{ width:36, height:36, background:"#E28743", color:"#fff",
                   border:"none", borderRadius:8, fontSize:20, fontWeight:700,
                   cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>
                 +
@@ -767,13 +853,101 @@ const TelaPacientes = ({ pacientes: pacientesProps, onSelect, onNovoPaciente, pa
                 { label:"Alertas", val: todos.filter(p=>p.risco==="alto").length },
               ].map(({ label, val }) => (
                 <div key={label}>
-                  <div style={{ fontSize:18, fontWeight:800, color:"#0f172a" }}>{val}</div>
+                  <div style={{ fontSize:18, fontWeight:800, color:"#2C302E" }}>{val}</div>
                   <div style={{ fontSize:10, color:"#94a3b8", fontWeight:600, textTransform:"uppercase",
                     letterSpacing:"0.06em" }}>{label}</div>
                 </div>
               ))}
             </div>
           )}
+
+          {/* Botão arquivados — apenas modo expandido */}
+          {menuAberto && (
+            <div style={{ padding:"0 16px 14px" }}>
+              <button
+                onClick={async () => {
+                  setModalArquivadosAberto(true);
+                  setErroRestaurar("");
+                  setCarregandoArquivados(true);
+                  const { data } = await listarPacientesArquivados(terapeutaId);
+                  setArquivados(data ?? []);
+                  setCarregandoArquivados(false);
+                }}
+                style={{ width:"100%", padding:"7px 0", background:"transparent",
+                  border:"1px solid #e2e8f0", borderRadius:8, fontSize:12,
+                  fontWeight:600, color:"#94a3b8", cursor:"pointer" }}>
+                Pacientes arquivados
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Modal de pacientes arquivados */}
+      {modalArquivadosAberto && (
+        <div style={{ position:"fixed", inset:0, zIndex:300,
+          background:"rgba(0,0,0,0.35)", display:"flex", alignItems:"center", justifyContent:"center" }}
+          onClick={() => setModalArquivadosAberto(false)}>
+          <div style={{ background:"#fff", borderRadius:14, width:420, maxWidth:"90vw",
+            maxHeight:"70vh", display:"flex", flexDirection:"column",
+            boxShadow:"0 8px 32px rgba(0,0,0,0.18)" }}
+            onClick={e => e.stopPropagation()}>
+            <div style={{ padding:"18px 20px 14px", borderBottom:"1px solid #f1f5f9",
+              display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+              <div style={{ fontSize:15, fontWeight:700, color:"#2C302E" }}>
+                Pacientes arquivados
+              </div>
+              <button onClick={() => setModalArquivadosAberto(false)}
+                style={{ background:"none", border:"none", fontSize:18, color:"#94a3b8",
+                  cursor:"pointer", lineHeight:1 }}>✕</button>
+            </div>
+            <div style={{ padding:"14px 20px", overflowY:"auto", flex:1 }}>
+              {erroRestaurar && (
+                <div style={{ fontSize:12, color:"#dc2626", background:"#fff1f2",
+                  border:"1px solid #fecdd3", borderRadius:8, padding:"8px 12px", marginBottom:12 }}>
+                  {erroRestaurar}
+                </div>
+              )}
+              {carregandoArquivados ? (
+                <div style={{ textAlign:"center", color:"#94a3b8", fontSize:13, padding:"20px 0" }}>
+                  Carregando…
+                </div>
+              ) : arquivados.length === 0 ? (
+                <div style={{ textAlign:"center", color:"#94a3b8", fontSize:13, padding:"20px 0" }}>
+                  Nenhum paciente arquivado nos últimos 30 dias.
+                </div>
+              ) : arquivados.map(p => (
+                <div key={p.id} style={{ display:"flex", alignItems:"center",
+                  justifyContent:"space-between", gap:12, padding:"10px 0",
+                  borderBottom:"1px solid #f1f5f9" }}>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontSize:13, fontWeight:700, color:"#2C302E",
+                      whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
+                      {p.nome}
+                    </div>
+                    <div style={{ fontSize:11, color:"#94a3b8", marginTop:2 }}>
+                      Arquivado em {new Date(p.deleted_at).toLocaleDateString("pt-BR")}
+                    </div>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      setErroRestaurar("");
+                      const result = await onRestaurar?.(p.id);
+                      if (result?.ok === false) {
+                        setErroRestaurar(result.message || "Erro ao restaurar paciente");
+                        return;
+                      }
+                      setArquivados(prev => prev.filter(a => a.id !== p.id));
+                    }}
+                    style={{ padding:"5px 14px", background:"#f0fdf4",
+                      border:"1px solid #bbf7d0", borderRadius:8, fontSize:12,
+                      fontWeight:700, color:"#16a34a", cursor:"pointer", flexShrink:0 }}>
+                    Restaurar
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       )}
 
@@ -797,7 +971,7 @@ const TelaPacientes = ({ pacientes: pacientesProps, onSelect, onNovoPaciente, pa
           <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:12 }}>
             <Avatar iniciais={hoverPaciente.iniciais} cor={hoverPaciente.cor} tamanho={40} />
             <div style={{ flex:1, minWidth:0 }}>
-              <div style={{ fontSize:14, fontWeight:700, color:"#0f172a",
+              <div style={{ fontSize:14, fontWeight:700, color:"#2C302E",
                 whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
                 {hoverPaciente.nome}
               </div>
@@ -848,19 +1022,51 @@ const TelaPacientes = ({ pacientes: pacientesProps, onSelect, onNovoPaciente, pa
         </div>
       )}
 
-      {/* Modal novo paciente — Passo 2: confirmar agendamento */}
+      {/* Modal novo paciente — Passo 2a: ir para importar histórico */}
+      {modo === "pacientes" && modalAberto && passoCriar === "importar" && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.4)", zIndex:100,
+          display:"flex", alignItems:"center", justifyContent:"center" }}>
+          <div style={{ background:"#fff", borderRadius:16, padding:"32px 28px 28px",
+            width:420, boxShadow:"0 20px 60px rgba(0,0,0,0.15)", textAlign:"center" }}>
+            <div style={{ fontSize:40, marginBottom:12 }}>✅</div>
+            <div style={{ fontSize:16, fontWeight:800, color:"#2C302E", marginBottom:8 }}>
+              Paciente criado com sucesso!
+            </div>
+            <div style={{ fontSize:13, color:"#64748b", marginBottom:28 }}>
+              Use a aba <strong>Importar</strong> para registrar o histórico anterior de{" "}
+              <strong style={{ color:"#2C302E" }}>{pacienteCriadoTemp?.nome}</strong>.
+            </div>
+            <div style={{ display:"flex", gap:10, justifyContent:"center" }}>
+              <button
+                onClick={() => { setModalAberto(false); setPassoCriar(null); onSelect(pacienteCriadoTemp); setPacienteCriadoTemp(null); }}
+                style={{ padding:"9px 20px", background:"#f1f5f9", color:"#475569",
+                  border:"none", borderRadius:8, fontSize:13, fontWeight:700, cursor:"pointer" }}>
+                Fazer isso depois
+              </button>
+              <button
+                onClick={() => { const p = pacienteCriadoTemp; setModalAberto(false); setPassoCriar(null); setPacienteCriadoTemp(null); onIrParaImportar?.(p); }}
+                style={{ padding:"9px 20px", background:"#E28743", color:"#fff",
+                  border:"none", borderRadius:8, fontSize:13, fontWeight:700, cursor:"pointer" }}>
+                📥 Ir para Importar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal novo paciente — Passo 2b: confirmar agendamento */}
       {modo === "pacientes" && modalAberto && passoCriar === "sucesso" && (
         <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.4)", zIndex:100,
           display:"flex", alignItems:"center", justifyContent:"center" }}>
           <div style={{ background:"#fff", borderRadius:16, padding:"32px 28px 28px",
             width:420, boxShadow:"0 20px 60px rgba(0,0,0,0.15)", textAlign:"center" }}>
             <div style={{ fontSize:40, marginBottom:12 }}>✅</div>
-            <div style={{ fontSize:16, fontWeight:800, color:"#0f172a", marginBottom:8 }}>
+            <div style={{ fontSize:16, fontWeight:800, color:"#2C302E", marginBottom:8 }}>
               Paciente criado com sucesso!
             </div>
             <div style={{ fontSize:13, color:"#64748b", marginBottom:28 }}>
               Deseja agendar a primeira sessão de{" "}
-              <strong style={{ color:"#0f172a" }}>{pacienteCriadoTemp?.nome}</strong> agora?
+              <strong style={{ color:"#2C302E" }}>{pacienteCriadoTemp?.nome}</strong> agora?
             </div>
             <div style={{ display:"flex", gap:10, justifyContent:"center" }}>
               <button
@@ -883,7 +1089,7 @@ const TelaPacientes = ({ pacientes: pacientesProps, onSelect, onNovoPaciente, pa
                   onSelect(p);
                   onAbrirAgendamento(p);
                 }}
-                style={{ padding:"9px 20px", background:"#6366f1", color:"#fff",
+                style={{ padding:"9px 20px", background:"#E28743", color:"#fff",
                   border:"none", borderRadius:8, fontSize:13, fontWeight:700, cursor:"pointer" }}>
                 📅 Agendar primeira sessão
               </button>
@@ -893,13 +1099,13 @@ const TelaPacientes = ({ pacientes: pacientesProps, onSelect, onNovoPaciente, pa
       )}
 
       {/* Modal novo paciente — Passo 1: formulário */}
-      {modo === "pacientes" && modalAberto && passoCriar !== "sucesso" && (
+      {modo === "pacientes" && modalAberto && !passoCriar && (
         <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.4)", zIndex:100,
           display:"flex", alignItems:"center", justifyContent:"center" }}
           onClick={e => e.target === e.currentTarget && setModalAberto(false)}>
           <div style={{ background:"#fff", borderRadius:16, padding:"28px 28px 24px",
             width:440, boxShadow:"0 20px 60px rgba(0,0,0,0.15)" }}>
-            <div style={{ fontSize:16, fontWeight:800, color:"#0f172a", marginBottom:20 }}>
+            <div style={{ fontSize:16, fontWeight:800, color:"#2C302E", marginBottom:20 }}>
               Novo paciente
             </div>
 
@@ -914,7 +1120,7 @@ const TelaPacientes = ({ pacientes: pacientesProps, onSelect, onNovoPaciente, pa
                 <input type={type} value={value} onChange={e => set(e.target.value)}
                   placeholder={placeholder}
                   style={{ width:"100%", padding:"8px 12px", border:"1.5px solid #e2e8f0",
-                    borderRadius:8, fontSize:13, color:"#0f172a", outline:"none",
+                    borderRadius:8, fontSize:13, color:"#2C302E", outline:"none",
                     boxSizing:"border-box" }} />
               </div>
             ))}
@@ -925,7 +1131,7 @@ const TelaPacientes = ({ pacientes: pacientesProps, onSelect, onNovoPaciente, pa
                   letterSpacing:"0.06em", marginBottom:5 }}>Linha terapêutica</div>
                 <select value={formLinha} onChange={e => setFormLinha(e.target.value)}
                   style={{ width:"100%", padding:"8px 12px", border:"1.5px solid #e2e8f0",
-                    borderRadius:8, fontSize:13, color:"#0f172a", outline:"none",
+                    borderRadius:8, fontSize:13, color:"#2C302E", outline:"none",
                     background:"#fff", boxSizing:"border-box" }}>
                   {Object.entries(BANCO_PALAVRAS).map(([key, val]) => (
                     <option key={key} value={key}>{val.label}</option>
@@ -937,7 +1143,7 @@ const TelaPacientes = ({ pacientes: pacientesProps, onSelect, onNovoPaciente, pa
                   letterSpacing:"0.06em", marginBottom:5 }}>Risco inicial</div>
                 <select value={formRisco} onChange={e => setFormRisco(e.target.value)}
                   style={{ width:"100%", padding:"8px 12px", border:"1.5px solid #e2e8f0",
-                    borderRadius:8, fontSize:13, color:"#0f172a", outline:"none",
+                    borderRadius:8, fontSize:13, color:"#2C302E", outline:"none",
                     background:"#fff", boxSizing:"border-box" }}>
                   <option value="baixo">Baixo</option>
                   <option value="medio">Médio</option>
@@ -946,16 +1152,43 @@ const TelaPacientes = ({ pacientes: pacientesProps, onSelect, onNovoPaciente, pa
               </div>
             </div>
 
+            <div style={{ marginBottom:20 }}>
+              <div style={{ fontSize:11, fontWeight:700, color:"#64748b", textTransform:"uppercase",
+                letterSpacing:"0.06em", marginBottom:10 }}>Histórico de sessões</div>
+              {[
+                { val:"primeira", label:"Primeira sessão", desc:"Começar do zero" },
+                { val:"historico", label:"Já possui histórico", desc:"Importar sessões após cadastro" },
+              ].map(({ val, label, desc }) => (
+                <label key={val} style={{ display:"flex", alignItems:"center", gap:10, marginBottom:8, cursor:"pointer" }}>
+                  <input type="radio" name="formHistorico" value={val}
+                    checked={formHistorico === val} onChange={() => setFormHistorico(val)}
+                    style={{ accentColor:"#E28743", width:15, height:15, cursor:"pointer", flexShrink:0 }} />
+                  <div>
+                    <span style={{ fontSize:13, fontWeight:600, color:"#2C302E" }}>{label}</span>
+                    <span style={{ fontSize:12, color:"#94a3b8", marginLeft:6 }}>— {desc}</span>
+                  </div>
+                </label>
+              ))}
+            </div>
+
+            {erroCriar && (
+              <div style={{ marginBottom:14, padding:"9px 12px", background:"#fff1f2",
+                border:"1px solid #fecdd3", borderRadius:8, fontSize:12, color:"#dc2626" }}>
+                {erroCriar}
+              </div>
+            )}
+
             <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
-              <button onClick={() => setModalAberto(false)}
+              <button onClick={() => { setModalAberto(false); setErroCriar(""); }}
                 style={{ padding:"9px 20px", background:"#f1f5f9", color:"#475569",
                   border:"none", borderRadius:8, fontSize:13, fontWeight:700, cursor:"pointer" }}>
                 Cancelar
               </button>
-              <button onClick={criarPaciente}
-                style={{ padding:"9px 24px", background:"#6366f1", color:"#fff",
-                  border:"none", borderRadius:8, fontSize:13, fontWeight:700, cursor:"pointer" }}>
-                Criar paciente
+              <button onClick={criarPaciente} disabled={criando}
+                style={{ padding:"9px 24px", background:"#E28743", color:"#fff",
+                  border:"none", borderRadius:8, fontSize:13, fontWeight:700, cursor:"pointer",
+                  opacity: criando ? 0.7 : 1 }}>
+                {criando ? "Criando…" : "Criar paciente"}
               </button>
             </div>
           </div>
@@ -968,14 +1201,26 @@ const TelaPacientes = ({ pacientes: pacientesProps, onSelect, onNovoPaciente, pa
 // ─── TELA: HISTÓRICO DO PACIENTE ───────────────────────────────────────────────
 const TelaHistorico = ({ paciente, isMobile = false, onAgendar, proximaSessao }) => {
   const [sessaoAtiva, setSessaoAtiva] = useState(paciente.sessoesList[0] ?? null);
+  const [subAba, setSubAba] = useState("historico"); // "historico" | "plano"
+  const [planoSessao, setPlanoSessao] = useState(null);
+  const [carregandoPlano, setCarregandoPlano] = useState(false);
   const [registrosApp, setRegistrosApp] = useState([]);
   const [humorApp, setHumorApp] = useState([]);
-  const [mostrarRegistros, setMostrarRegistros] = useState(false);
+  const [mostrarRegistros, setMostrarRegistros] = useState(true);
+  const [viewPrincipal, setViewPrincipal] = useState("sessoes"); // "sessoes" | "registros_app"
+  const [registroExpandido, setRegistroExpandido] = useState(null);
+  const [sidebarColapsada, setSidebarColapsada] = useState(false);
 
   useEffect(() => {
     setSessaoAtiva(paciente.sessoesList[0] ?? null);
+    setSubAba("historico");
+    setPlanoSessao(null);
     setRegistrosApp([]);
     setHumorApp([]);
+    setMostrarRegistros(true);
+    setViewPrincipal("sessoes");
+    setRegistroExpandido(null);
+    setSidebarColapsada(false);
   }, [paciente.id]);
 
   // Atualiza sessaoAtiva quando sessões chegam depois da montagem
@@ -985,15 +1230,40 @@ const TelaHistorico = ({ paciente, isMobile = false, onAgendar, proximaSessao })
     }
   }, [paciente.sessoesList.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Ao trocar de sessão, reseta sub-aba e plano carregado
+  const selecionarSessao = (s) => {
+    setSessaoAtiva(s);
+    setSubAba("historico");
+    setPlanoSessao(null);
+  };
+
+  // Carrega plano ao trocar para a sub-aba "plano"
+  useEffect(() => {
+    if (subAba !== "plano" || !sessaoAtiva || typeof paciente.id !== "string") return;
+    setCarregandoPlano(true);
+    buscarPlanoDaSessao(paciente.id, sessaoAtiva.id, sessaoAtiva.numero).then(({ data }) => {
+      setPlanoSessao(data);
+      setCarregandoPlano(false);
+    });
+  }, [subAba, sessaoAtiva?.numero, paciente.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Sessão a exibir: usa sessaoAtiva ou fallback para a primeira disponível
   const sessaoMostrar = sessaoAtiva ?? paciente.sessoesList[0] ?? null;
 
-  // Carrega registros do app ao abrir painel (lazy)
+  // Carrega registros do app de forma antecipada — auto-expande se houver dados
   useEffect(() => {
-    if (!mostrarRegistros || typeof paciente.id !== "string") return;
-    listarRegistrosDoPaciente(paciente.id).then(({ data }) => setRegistrosApp(data ?? []));
-    listarHumorPaciente(paciente.id, 14).then(({ data }) => setHumorApp(data ?? []));
-  }, [mostrarRegistros, paciente.id]);
+    if (typeof paciente.id !== "string") return;
+    listarRegistrosDoPaciente(paciente.id).then(({ data }) => {
+      const lista = data ?? [];
+      setRegistrosApp(lista);
+      if (lista.length > 0) setMostrarRegistros(true);
+    });
+    listarHumorPaciente(paciente.id, 30).then(({ data }) => {
+      const lista = data ?? [];
+      setHumorApp(lista);
+      if (lista.length > 0) setMostrarRegistros(true);
+    });
+  }, [paciente.id]);
 
   return (
     <div style={{ height:"100%", display:"flex", flexDirection:"column", overflowY:"auto" }}>
@@ -1004,14 +1274,14 @@ const TelaHistorico = ({ paciente, isMobile = false, onAgendar, proximaSessao })
         <div style={{ display:"flex", alignItems:"center", gap:14, marginBottom:16 }}>
           <Avatar iniciais={paciente.iniciais} cor={paciente.cor} tamanho={48} />
           <div>
-            <div style={{ fontSize:20, fontWeight:800, color:"#0f172a" }}>{paciente.nome}</div>
+            <div style={{ fontSize:20, fontWeight:800, color:"#2C302E" }}>{paciente.nome}</div>
             <div style={{ fontSize:13, color:"#64748b" }}>{paciente.queixa}</div>
           </div>
           <div style={{ marginLeft:"auto", display:"flex", alignItems:"center", gap:8 }}>
             <RiscoTag nivel={paciente.risco} />
             {onAgendar && (
               <button onClick={() => onAgendar()}
-                style={{ padding:"5px 12px", background:"#6366f1", color:"#fff",
+                style={{ padding:"5px 12px", background:"#E28743", color:"#fff",
                   border:"none", borderRadius:8, fontSize:11, fontWeight:700, cursor:"pointer",
                   whiteSpace:"nowrap" }}>
                 📅 Agendar
@@ -1031,7 +1301,7 @@ const TelaHistorico = ({ paciente, isMobile = false, onAgendar, proximaSessao })
           ].map(({ label, val, sub, destaque }) => (
             <div key={label} style={{ background: destaque ? "#fff1f2" : "#fff", borderRadius:10, padding:"10px 12px",
               border: destaque ? "1px solid #fecdd3" : "1px solid #f1f5f9" }}>
-              <div style={{ fontSize:destaque ? 12 : 16, fontWeight:800, color: destaque ? "#dc2626" : "#0f172a",
+              <div style={{ fontSize:destaque ? 12 : 16, fontWeight:800, color: destaque ? "#dc2626" : "#2C302E",
                 overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{val}</div>
               <div style={{ fontSize:10, color:"#94a3b8", fontWeight:700, textTransform:"uppercase",
                 letterSpacing:"0.05em" }}>{label}</div>
@@ -1042,13 +1312,37 @@ const TelaHistorico = ({ paciente, isMobile = false, onAgendar, proximaSessao })
 
       </div>
 
-      <div style={{ display:"flex", flex:1, minHeight:0, flexDirection: isMobile ? "column" : "row" }}>
+      {/* Toggle principal: Sessões / Registros do app */}
+      <div style={{ display:"flex", borderBottom:"1px solid #f1f5f9", background:"#fff",
+        padding:"0 24px", flexShrink:0 }}>
+        {[
+          { id:"sessoes",       label:"📋 Sessões" },
+          { id:"registros_app", label:"📱 Registros do app" },
+        ].map(t => (
+          <button key={t.id} onClick={() => setViewPrincipal(t.id)}
+            style={{ padding:"10px 16px", border:"none", background:"none", cursor:"pointer",
+              fontSize:13, fontWeight:700, transition:"all 0.15s", marginRight:4,
+              borderBottom: `2px solid ${viewPrincipal === t.id ? "#E28743" : "transparent"}`,
+              color: viewPrincipal === t.id ? "#E28743" : "#94a3b8" }}>
+            {t.label}
+            {t.id === "registros_app" && (registrosApp.length > 0 || humorApp.length > 0) && (
+              <span style={{ marginLeft:6, fontSize:10, fontWeight:700,
+                background:"#FEF3E2", color:"#C47535",
+                padding:"1px 6px", borderRadius:10 }}>
+                {registrosApp.length + humorApp.length}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      <div style={{ display: viewPrincipal === "sessoes" ? "flex" : "none", flex:1, minHeight:0, flexDirection: isMobile ? "column" : "row" }}>
         {/* Mobile: dropdown seletor de sessão */}
         {isMobile && paciente.sessoesList.length > 0 && (
           <div style={{ padding:"10px 16px", borderBottom:"1px solid #f1f5f9", background:"#fff", flexShrink:0 }}>
             <select
               value={sessaoAtiva?.numero ?? ""}
-              onChange={e => setSessaoAtiva(paciente.sessoesList.find(s => s.numero === parseInt(e.target.value)))}
+              onChange={e => selecionarSessao(paciente.sessoesList.find(s => s.numero === parseInt(e.target.value)))}
               style={{ width:"100%", padding:"8px 12px", border:"1.5px solid #e2e8f0", borderRadius:8, fontSize:13 }}
             >
               {paciente.sessoesList.map(s => (
@@ -1061,44 +1355,297 @@ const TelaHistorico = ({ paciente, isMobile = false, onAgendar, proximaSessao })
         )}
         {/* Desktop: lista de sessões */}
         {!isMobile && (
-          <div style={{ width:200, borderRight:"1px solid #f1f5f9", overflowY:"auto", flexShrink:0 }}>
-            <div style={{ padding:"12px 16px 8px" }}>
-              <div style={{ fontSize:10, fontWeight:700, color:"#94a3b8", textTransform:"uppercase",
-                letterSpacing:"0.08em" }}>Sessões</div>
+          <div style={{ width: sidebarColapsada ? 44 : 200, borderRight:"1px solid #f1f5f9",
+            flexShrink:0, display:"flex", flexDirection:"column",
+            transition:"width 0.2s ease", overflow:"hidden" }}>
+            {/* Header com botão sanduíche */}
+            <div style={{ display:"flex", alignItems:"center", justifyContent: sidebarColapsada ? "center" : "space-between",
+              padding: sidebarColapsada ? "10px 0" : "10px 12px 8px 16px", flexShrink:0 }}>
+              {!sidebarColapsada && (
+                <div style={{ fontSize:10, fontWeight:700, color:"#94a3b8", textTransform:"uppercase",
+                  letterSpacing:"0.08em" }}>Sessões</div>
+              )}
+              <button onClick={() => setSidebarColapsada(v => !v)}
+                title={sidebarColapsada ? "Expandir painel" : "Recolher painel"}
+                style={{ background:"none", border:"none", cursor:"pointer", padding:"4px 6px",
+                  borderRadius:6, color:"#94a3b8", fontSize:15, lineHeight:1,
+                  flexShrink:0, transition:"color 0.15s" }}>
+                ☰
+              </button>
             </div>
-            {paciente.sessoesList.map(s => {
-              const ativa = sessaoAtiva?.numero === s.numero;
-              const temAlerta = s.alertas?.length > 0;
-              return (
-                <div key={s.numero} onClick={() => setSessaoAtiva(s)}
-                  style={{ padding:"10px 16px", cursor:"pointer",
-                    background: ativa ? `${paciente.cor}10` : "transparent",
-                    borderLeft: ativa ? `3px solid ${paciente.cor}` : "3px solid transparent",
-                    transition:"all 0.1s" }}>
-                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                    <span style={{ fontSize:13, fontWeight:700, color:"#0f172a" }}>
-                      Sessão {s.numero}
-                    </span>
-                    {temAlerta && <span style={{ fontSize:14 }}>🔴</span>}
+
+            {/* Lista de sessões (oculta quando colapsada) */}
+            {!sidebarColapsada && (
+              <div style={{ flex:1, overflowY:"auto" }}>
+                {paciente.sessoesList.length === 0 && (
+                  <div style={{ padding:"16px", textAlign:"center", color:"#94a3b8" }}>
+                    <div style={{ fontSize:20, marginBottom:6 }}>📋</div>
+                    <div style={{ fontSize:11, lineHeight:1.5 }}>
+                      Nenhuma sessão.<br/>Use "Importar" para registrar.
+                    </div>
                   </div>
-                  <div style={{ fontSize:11, color:"#94a3b8" }}>{s.data}</div>
-                </div>
-              );
-            })}
+                )}
+                {paciente.sessoesList.map(s => {
+                  const ativa = sessaoAtiva?.numero === s.numero;
+                  const temAlerta = s.alertas?.length > 0;
+                  return (
+                    <div key={s.numero} onClick={() => selecionarSessao(s)}
+                      style={{ padding:"10px 16px", cursor:"pointer",
+                        background: ativa ? `${paciente.cor}10` : "transparent",
+                        borderLeft: ativa ? `3px solid ${paciente.cor}` : "3px solid transparent",
+                        transition:"all 0.1s" }}>
+                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                        <span style={{ fontSize:13, fontWeight:700, color:"#2C302E" }}>
+                          Sessão {s.numero}
+                        </span>
+                        {temAlerta && <span style={{ fontSize:14 }}>🔴</span>}
+                      </div>
+                      <div style={{ fontSize:11, color:"#94a3b8" }}>{s.data}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Quando colapsada: mini-lista com número da sessão ativa */}
+            {sidebarColapsada && sessaoMostrar && (
+              <div style={{ flex:1, overflowY:"auto" }}>
+                {paciente.sessoesList.map(s => {
+                  const ativa = sessaoAtiva?.numero === s.numero;
+                  return (
+                    <div key={s.numero} onClick={() => selecionarSessao(s)}
+                      title={`Sessão ${s.numero} — ${s.data}`}
+                      style={{ padding:"6px 0", textAlign:"center", cursor:"pointer",
+                        borderLeft: ativa ? `3px solid ${paciente.cor}` : "3px solid transparent",
+                        background: ativa ? `${paciente.cor}10` : "transparent" }}>
+                      <span style={{ fontSize:11, fontWeight:700,
+                        color: ativa ? paciente.cor : "#94a3b8" }}>
+                        {s.numero}
+                      </span>
+                      {s.alertas?.length > 0 && (
+                        <div style={{ fontSize:8 }}>🔴</div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
 
         {/* Detalhe da sessão */}
         <div style={{ flex:1, overflowY:"auto", padding: isMobile ? "16px" : "20px 24px" }}>
           {!sessaoMostrar && (
-            <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
-              height:"100%", gap:12, color:"#94a3b8", textAlign:"center", padding:32 }}>
+            <div style={{ display:"flex", flexDirection:"column", alignItems:"center",
+              gap:12, color:"#94a3b8", textAlign:"center", padding:"32px 32px 24px" }}>
               <div style={{ fontSize:32 }}>📋</div>
               <div style={{ fontSize:15, fontWeight:700, color:"#64748b" }}>Nenhuma sessão registrada</div>
               <div style={{ fontSize:13 }}>Use a aba "Importar" para registrar a primeira sessão deste paciente.</div>
             </div>
           )}
-          {sessaoMostrar && sessaoMostrar.alertas.length > 0 && (
+
+          {/* Sub-tabs: Histórico da sessão / Plano da sessão */}
+          {sessaoMostrar && (
+            <div style={{ display:"flex", gap:4, marginBottom:20, background:"#f1f5f9",
+              borderRadius:10, padding:4 }}>
+              {[
+                { id:"historico", label:"📋 Histórico da sessão" },
+                { id:"plano",     label:"🎯 Plano da sessão" },
+              ].map(t => (
+                <button key={t.id} onClick={() => setSubAba(t.id)}
+                  style={{ flex:1, padding:"7px 12px", border:"none", borderRadius:7, cursor:"pointer",
+                    fontSize:12, fontWeight:700, transition:"all 0.15s",
+                    background: subAba === t.id ? "#fff" : "transparent",
+                    color: subAba === t.id ? "#2C302E" : "#94a3b8",
+                    boxShadow: subAba === t.id ? "0 1px 4px rgba(0,0,0,0.08)" : "none" }}>
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* ── VIEW: PLANO DA SESSÃO ── */}
+          {sessaoMostrar && subAba === "plano" && (
+            <div>
+              {carregandoPlano ? (
+                <div style={{ textAlign:"center", padding:"40px 0", color:"#94a3b8", fontSize:13 }}>
+                  Carregando plano…
+                </div>
+              ) : !planoSessao ? (
+                <div style={{ textAlign:"center", padding:"40px 0", color:"#94a3b8" }}>
+                  <div style={{ fontSize:32, marginBottom:10 }}>🎯</div>
+                  <div style={{ fontSize:14, fontWeight:600, color:"#64748b", marginBottom:6 }}>
+                    Nenhum plano encontrado para a Sessão {sessaoMostrar.numero}
+                  </div>
+                  <div style={{ fontSize:12 }}>
+                    O plano é gerado na aba "Próx. sessão" após importar a sessão anterior.
+                  </div>
+                </div>
+              ) : (
+                <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+                  {/* Cabeçalho do plano */}
+                  <div style={{ background:"#FEF3E2", border:"1px solid #F0D4B0",
+                    borderRadius:12, padding:"14px 16px", display:"flex", alignItems:"center",
+                    justifyContent:"space-between" }}>
+                    <div>
+                      <div style={{ fontSize:11, fontWeight:700, color:"#C47535",
+                        textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:2 }}>
+                        Plano gerado para a Sessão {sessaoMostrar.numero}
+                      </div>
+                      <div style={{ fontSize:12, color:"#8A4020" }}>
+                        {planoSessao.editado ? "Editado pelo terapeuta" : `Gerado por ${planoSessao.gerado_por ?? "IA"}`}
+                        {planoSessao.status === "confirmado" && " · ✓ Confirmado"}
+                      </div>
+                    </div>
+                    <div style={{ fontSize:10, color:"#94a3b8" }}>
+                      {new Date(planoSessao.created_at).toLocaleDateString("pt-BR")}
+                    </div>
+                  </div>
+
+                  {/* Objetivo */}
+                  {planoSessao.objetivo && (
+                    <div style={{ background:"#fff", border:"1px solid #f1f5f9",
+                      borderRadius:12, padding:"14px 16px" }}>
+                      <div style={{ fontSize:11, fontWeight:700, color:"#94a3b8",
+                        textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:8 }}>
+                        Objetivo da sessão
+                      </div>
+                      <div style={{ fontSize:13, color:"#334155", lineHeight:1.6 }}>
+                        {planoSessao.objetivo}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Técnicas */}
+                  {planoSessao.tecnicas?.length > 0 && (
+                    <div style={{ background:"#fff", border:"1px solid #f1f5f9",
+                      borderRadius:12, padding:"14px 16px" }}>
+                      <div style={{ fontSize:11, fontWeight:700, color:"#94a3b8",
+                        textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:8 }}>
+                        Técnicas sugeridas
+                      </div>
+                      <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+                        {planoSessao.tecnicas.map(t => (
+                          <Badge key={t} tipo="tecnica">{t}</Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Perguntas */}
+                  {planoSessao.perguntas?.length > 0 && (
+                    <div style={{ background:"#fff", border:"1px solid #f1f5f9",
+                      borderRadius:12, padding:"14px 16px" }}>
+                      <div style={{ fontSize:11, fontWeight:700, color:"#94a3b8",
+                        textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:8 }}>
+                        {LABELS_POR_LINHA[paciente.linha || "tcc"].perguntas}
+                      </div>
+                      <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+                        {planoSessao.perguntas.map((p, i) => (
+                          <div key={i} style={{ fontSize:13, color:"#334155", padding:"8px 12px",
+                            background:"#f8fafc", borderRadius:8,
+                            borderLeft:"3px solid #E28743" }}>
+                            {p}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Distorções foco */}
+                  {planoSessao.distorcoes_foco?.length > 0 && (
+                    <div style={{ background:"#fff", border:"1px solid #f1f5f9",
+                      borderRadius:12, padding:"14px 16px" }}>
+                      <div style={{ fontSize:11, fontWeight:700, color:"#94a3b8",
+                        textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:8 }}>
+                        {LABELS_POR_LINHA[paciente.linha || "tcc"].material}
+                      </div>
+                      <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+                        {planoSessao.distorcoes_foco.map(d => (
+                          <Badge key={d} tipo="distorcao">{d}</Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Tarefa planejada */}
+                  {planoSessao.tarefa && (
+                    <div style={{ background:"#f0fdf4", border:"1px solid #bbf7d0",
+                      borderRadius:12, padding:"14px 16px" }}>
+                      <div style={{ fontSize:11, fontWeight:700, color:"#166534",
+                        textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:6 }}>
+                        Tarefa planejada
+                      </div>
+                      <div style={{ fontSize:13, color:"#166534", lineHeight:1.6 }}>
+                        {planoSessao.tarefa}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Observações */}
+                  {planoSessao.observacoes && (
+                    <div style={{ padding:"10px 14px", background:"#f0f9ff",
+                      borderRadius:10, fontSize:12, color:"#0c4a6e",
+                      borderLeft:"3px solid #0ea5e9" }}>
+                      💡 {planoSessao.observacoes}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── VIEW: HISTÓRICO DA SESSÃO ── */}
+          {sessaoMostrar && subAba !== "plano" && (
+          <div>
+
+          {/* Status da tarefa de casa */}
+          {sessaoMostrar.tarefa && (() => {
+            const resultado = sessaoMostrar.resultadoTarefa ?? "";
+            const concluiu    = resultado.toLowerCase().includes("completamente");
+            const parcial     = resultado.toLowerCase().includes("parcialmente");
+            const naoConcluiu = resultado.toLowerCase().includes("não realizou") || resultado.toLowerCase().includes("nao realizou");
+            const semInfo     = !resultado;
+            const cor    = concluiu ? "#15803d" : parcial ? "#92400e" : naoConcluiu ? "#991b1b" : "#64748b";
+            const bg     = concluiu ? "#f0fdf4" : parcial ? "#fefce8" : naoConcluiu ? "#fff1f2" : "#f8fafc";
+            const borda  = concluiu ? "#bbf7d0" : parcial ? "#fde68a" : naoConcluiu ? "#fecdd3" : "#e2e8f0";
+            const icone  = concluiu ? "✓" : parcial ? "~" : naoConcluiu ? "✗" : "—";
+            const label  = concluiu ? "Realizou" : parcial ? "Realizou parcialmente" : naoConcluiu ? "Não realizou" : "Sem retorno";
+            return (
+              <div style={{ background:bg, border:`1px solid ${borda}`, borderRadius:12,
+                padding:"12px 16px", marginBottom:20,
+                display:"flex", alignItems:"flex-start", gap:12 }}>
+                <div style={{ width:32, height:32, borderRadius:8, background:borda,
+                  display:"flex", alignItems:"center", justifyContent:"center",
+                  flexShrink:0, fontSize:16, fontWeight:800, color:cor }}>
+                  {icone}
+                </div>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4, flexWrap:"wrap" }}>
+                    <span style={{ fontSize:11, fontWeight:700, color:"#94a3b8",
+                      textTransform:"uppercase", letterSpacing:"0.07em" }}>
+                      Tarefa de casa
+                    </span>
+                    <span style={{ fontSize:11, fontWeight:700, color:cor,
+                      background:"#fff", border:`1px solid ${borda}`,
+                      padding:"1px 8px", borderRadius:20 }}>
+                      {label}
+                    </span>
+                    {semInfo && (
+                      <span style={{ fontSize:11, color:"#94a3b8" }}>
+                        a confirmar na próxima sessão
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ fontSize:12, color:cor, lineHeight:1.5 }}>
+                    {sessaoMostrar.tarefa}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
+          {sessaoMostrar && subAba !== "plano" && sessaoMostrar.alertas.length > 0 && (
             <div style={{ background:"#fff1f2", border:"1px solid #fecdd3",
               borderRadius:10, padding:"12px 16px", marginBottom:16 }}>
               <div style={{ fontSize:12, fontWeight:700, color:"#9f1239", marginBottom:6 }}>
@@ -1110,7 +1657,7 @@ const TelaHistorico = ({ paciente, isMobile = false, onAgendar, proximaSessao })
             </div>
           )}
 
-          {sessaoMostrar && (
+          {sessaoMostrar && subAba !== "plano" && (
           <div style={{ display:"grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap:16 }}>
             {/* Emoções */}
             <div style={{ background:"#fff", borderRadius:12, padding:"16px",
@@ -1192,110 +1739,259 @@ const TelaHistorico = ({ paciente, isMobile = false, onAgendar, proximaSessao })
             </div>
           </div>
           )}
-
-          {/* Registros do app do paciente */}
-          <div style={{ marginTop: sessaoMostrar ? 24 : 0, border:"1px solid #e2e8f0",
-            borderRadius:12, overflow:"hidden" }}>
-            <button
-              onClick={() => setMostrarRegistros(v => !v)}
-              style={{ width:"100%", display:"flex", alignItems:"center", justifyContent:"space-between",
-                padding:"12px 16px", background:"#f8fafc", border:"none", cursor:"pointer",
-                textAlign:"left" }}>
-              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                <span style={{ fontSize:13, fontWeight:700, color:"#0f172a" }}>📱 Registros do app</span>
-                {registrosApp.length > 0 && (
-                  <span style={{ fontSize:11, fontWeight:700, color:"#7c3aed", background:"#f3e8ff",
-                    border:"1px solid #ddd6fe", borderRadius:20, padding:"1px 8px" }}>
-                    {registrosApp.length} {registrosApp.length === 1 ? "registro" : "registros"}
-                  </span>
-                )}
-              </div>
-              <span style={{ fontSize:12, color:"#94a3b8" }}>{mostrarRegistros ? "▲" : "▼"}</span>
-            </button>
-
-            {mostrarRegistros && (
-              <div style={{ padding:"12px 16px" }}>
-                {/* Humor dos últimos 14 dias */}
-                {humorApp.length > 0 && (
-                  <div style={{ marginBottom:16 }}>
-                    <div style={{ fontSize:11, fontWeight:700, color:"#94a3b8", textTransform:"uppercase",
-                      letterSpacing:"0.07em", marginBottom:10 }}>Humor (últimos 14 dias)</div>
-                    <div style={{ display:"flex", gap:4, alignItems:"flex-end", flexWrap:"wrap" }}>
-                      {humorApp.map(h => {
-                        const cor = h.valor >= 7 ? "#10b981" : h.valor >= 5 ? "#f59e0b" : "#ef4444";
-                        return (
-                          <div key={h.data} title={`${h.data}: ${h.valor}/10`}
-                            style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:2 }}>
-                            <div style={{ width:20, background:cor, borderRadius:3,
-                              height: Math.max(4, h.valor * 5) }} />
-                            <div style={{ fontSize:9, color:"#94a3b8" }}>
-                              {new Date(h.data + "T12:00:00").toLocaleDateString("pt-BR", { day:"2-digit", month:"2-digit" })}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-
-                {/* Registros ABCD */}
-                {registrosApp.length === 0 && humorApp.length === 0 && (
-                  <div style={{ textAlign:"center", padding:"20px 0", color:"#94a3b8", fontSize:13 }}>
-                    Nenhum registro enviado pelo paciente ainda.
-                  </div>
-                )}
-                {registrosApp.length > 0 && (
-                  <div>
-                    <div style={{ fontSize:11, fontWeight:700, color:"#94a3b8", textTransform:"uppercase",
-                      letterSpacing:"0.07em", marginBottom:10 }}>Registros ABCD</div>
-                    {registrosApp.slice(0, 5).map(r => (
-                      <div key={r.id} style={{ border:"1px solid #f1f5f9", borderRadius:10,
-                        padding:"10px 14px", marginBottom:8, background:"#fff" }}>
-                        <div style={{ display:"flex", justifyContent:"space-between",
-                          alignItems:"center", marginBottom:6 }}>
-                          <span style={{ fontSize:12, fontWeight:700, color:"#0f172a" }}>
-                            {r.situacao ? r.situacao.slice(0, 60) + (r.situacao.length > 60 ? "…" : "") : "Registro sem situação"}
-                          </span>
-                          <span style={{ fontSize:10, color:"#94a3b8", flexShrink:0, marginLeft:8 }}>
-                            {new Date(r.criado_em).toLocaleDateString("pt-BR")}
-                          </span>
-                        </div>
-                        {r.pensamento && (
-                          <div style={{ fontSize:11, color:"#475569", marginBottom:3 }}>
-                            <span style={{ fontWeight:600, color:"#94a3b8" }}>Pensamento: </span>{r.pensamento.slice(0,80)}{r.pensamento.length > 80 ? "…" : ""}
-                          </div>
-                        )}
-                        {(r.intensidade_antes != null || r.intensidade_depois != null) && (
-                          <div style={{ display:"flex", gap:12, marginTop:6 }}>
-                            {r.intensidade_antes != null && (
-                              <span style={{ fontSize:11, color:"#64748b" }}>
-                                Antes: <strong>{r.intensidade_antes}%</strong>
-                              </span>
-                            )}
-                            {r.intensidade_depois != null && (
-                              <span style={{ fontSize:11, color: r.intensidade_depois < r.intensidade_antes ? "#15803d" : "#dc2626" }}>
-                                Depois: <strong>{r.intensidade_depois}%</strong>
-                                {r.intensidade_depois < r.intensidade_antes
-                                  ? ` (↓${r.intensidade_antes - r.intensidade_depois}pts)`
-                                  : ` (↑${r.intensidade_depois - r.intensidade_antes}pts)`}
-                              </span>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                    {registrosApp.length > 5 && (
-                      <div style={{ fontSize:12, color:"#94a3b8", textAlign:"center", marginTop:4 }}>
-                        +{registrosApp.length - 5} registros mais antigos
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
           </div>
+          )}
+
         </div>
       </div>
+
+      {/* ── VIEW: REGISTROS DO APP ── */}
+      {viewPrincipal === "registros_app" && (() => {
+        const totalHumor = humorApp.length;
+        const mediaHumor = totalHumor > 0
+          ? (humorApp.reduce((a, h) => a + h.valor, 0) / totalHumor).toFixed(1)
+          : null;
+        const registrosComInt = registrosApp.filter(r => r.intensidade_antes != null && r.intensidade_depois != null);
+        const mediaReducao = registrosComInt.length > 0
+          ? Math.round(registrosComInt.reduce((a, r) => a + (r.intensidade_antes - r.intensidade_depois), 0) / registrosComInt.length)
+          : null;
+        const corHumor = mediaHumor >= 7 ? "#10b981" : mediaHumor >= 5 ? "#f59e0b" : "#ef4444";
+
+        return (
+          <div style={{ flex:1, overflowY:"auto", padding: isMobile ? "16px" : "20px 28px" }}>
+
+            {/* Cards de resumo */}
+            <div style={{ display:"grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4,1fr)",
+              gap:12, marginBottom:24 }}>
+              {[
+                { label:"Humor registrado", val: totalHumor > 0 ? `${totalHumor} dias` : "—", sub:"últimos 30 dias", cor:"#E28743" },
+                { label:"Média de humor",   val: mediaHumor ? `${mediaHumor}/10` : "—",    sub:"escala de 1 a 10", cor: mediaHumor ? corHumor : "#94a3b8" },
+                { label:"Registros ABCD",   val: registrosApp.length > 0 ? registrosApp.length : "—", sub:"formulários enviados", cor:"#6366f1" },
+                { label:"Redução média",    val: mediaReducao != null ? `↓${mediaReducao}pts` : "—", sub:"intensidade emocional", cor: mediaReducao > 0 ? "#10b981" : "#94a3b8" },
+              ].map(c => (
+                <div key={c.label} style={{ background:"#fff", border:"1px solid #f1f5f9",
+                  borderRadius:12, padding:"12px 14px" }}>
+                  <div style={{ fontSize:18, fontWeight:800, color:c.cor }}>{c.val}</div>
+                  <div style={{ fontSize:10, fontWeight:700, color:"#94a3b8",
+                    textTransform:"uppercase", letterSpacing:"0.05em" }}>{c.label}</div>
+                  <div style={{ fontSize:10, color:"#cbd5e1" }}>{c.sub}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Gráfico de humor */}
+            {humorApp.length > 0 && (
+              <div style={{ background:"#fff", border:"1px solid #f1f5f9",
+                borderRadius:12, padding:"16px 18px", marginBottom:24 }}>
+                <div style={{ fontSize:11, fontWeight:700, color:"#94a3b8",
+                  textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:14 }}>
+                  Humor diário — últimos 30 dias
+                </div>
+                <div style={{ overflowX:"auto", paddingBottom:4 }}>
+                  <div style={{ display:"flex", gap:5, alignItems:"flex-end",
+                    minWidth: humorApp.length * 36 }}>
+                    {humorApp.map(h => {
+                      const cor = h.valor >= 7 ? "#10b981" : h.valor >= 5 ? "#f59e0b" : "#ef4444";
+                      const dt = new Date(h.data + "T12:00:00");
+                      const diaSemana = dt.toLocaleDateString("pt-BR", { weekday:"short" });
+                      const diaMes = dt.toLocaleDateString("pt-BR", { day:"2-digit", month:"2-digit" });
+                      return (
+                        <div key={h.data} style={{ display:"flex", flexDirection:"column",
+                          alignItems:"center", gap:4, flex:"0 0 32px" }}>
+                          <div style={{ fontSize:9, fontWeight:700, color:"#64748b" }}>{h.valor}</div>
+                          <div title={`${diaMes}: ${h.valor}/10`}
+                            style={{ width:24, background:cor, borderRadius:4,
+                              height: Math.max(8, h.valor * 8), transition:"height 0.2s" }} />
+                          <div style={{ fontSize:8, color:"#94a3b8", textAlign:"center",
+                            lineHeight:1.2 }}>
+                            <div>{diaSemana.replace(".", "")}</div>
+                            <div>{diaMes}</div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div style={{ display:"flex", gap:12, marginTop:12, flexWrap:"wrap" }}>
+                  {[["#10b981","≥ 7 — Bom"], ["#f59e0b","5–6 — Neutro"], ["#ef4444","≤ 4 — Difícil"]].map(([cor, txt]) => (
+                    <div key={txt} style={{ display:"flex", alignItems:"center", gap:5 }}>
+                      <div style={{ width:10, height:10, borderRadius:2, background:cor }} />
+                      <span style={{ fontSize:11, color:"#64748b" }}>{txt}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Lista de registros ABCD */}
+            <div style={{ marginBottom:8 }}>
+              <div style={{ fontSize:11, fontWeight:700, color:"#94a3b8",
+                textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:12 }}>
+                Registros ABCD — {registrosApp.length} {registrosApp.length === 1 ? "registro" : "registros"}
+              </div>
+
+              {registrosApp.length === 0 && (
+                <div style={{ textAlign:"center", padding:"40px 0", color:"#94a3b8" }}>
+                  <div style={{ fontSize:32, marginBottom:8 }}>✏️</div>
+                  <div style={{ fontSize:14, fontWeight:600, color:"#64748b" }}>
+                    Nenhum registro enviado ainda
+                  </div>
+                  <div style={{ fontSize:12, marginTop:4 }}>
+                    O paciente pode enviar pela aba "Registrar" no app.
+                  </div>
+                </div>
+              )}
+
+              <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+                {registrosApp.map(r => {
+                  const expandido = registroExpandido === r.id;
+                  const reducao = r.intensidade_antes != null && r.intensidade_depois != null
+                    ? r.intensidade_antes - r.intensidade_depois : null;
+                  const corReducao = reducao > 0 ? "#15803d" : reducao < 0 ? "#dc2626" : "#94a3b8";
+                  return (
+                    <div key={r.id} style={{ background:"#fff", border:"1px solid #f1f5f9",
+                      borderRadius:12, overflow:"hidden" }}>
+                      {/* Cabeçalho clicável */}
+                      <button onClick={() => setRegistroExpandido(expandido ? null : r.id)}
+                        style={{ width:"100%", display:"flex", alignItems:"flex-start",
+                          justifyContent:"space-between", padding:"12px 16px",
+                          background:"none", border:"none", cursor:"pointer", textAlign:"left",
+                          gap:12 }}>
+                        <div style={{ flex:1, minWidth:0 }}>
+                          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4,
+                            flexWrap:"wrap" }}>
+                            {r.emocao && (
+                              <span style={{ fontSize:11, fontWeight:700, color:"#7c3aed",
+                                background:"#f3e8ff", padding:"2px 8px", borderRadius:10 }}>
+                                {r.emocao}
+                              </span>
+                            )}
+                            {r.intensidade_antes != null && (
+                              <span style={{ fontSize:11, color:"#64748b" }}>
+                                {r.intensidade_antes}%
+                                {r.intensidade_depois != null && (
+                                  <span style={{ color:corReducao, fontWeight:700 }}>
+                                    {" → "}{r.intensidade_depois}%
+                                    {reducao > 0 ? ` (↓${reducao}pts)` : reducao < 0 ? ` (↑${Math.abs(reducao)}pts)` : ""}
+                                  </span>
+                                )}
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ fontSize:13, color:"#334155", lineHeight:1.4,
+                            overflow:"hidden", textOverflow:"ellipsis",
+                            whiteSpace: expandido ? "normal" : "nowrap" }}>
+                            {r.situacao || "Registro sem situação"}
+                          </div>
+                        </div>
+                        <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end",
+                          gap:4, flexShrink:0 }}>
+                          <span style={{ fontSize:10, color:"#94a3b8" }}>
+                            {new Date(r.criado_em).toLocaleDateString("pt-BR", { day:"2-digit", month:"2-digit", year:"2-digit" })}
+                          </span>
+                          <span style={{ fontSize:12, color:"#94a3b8" }}>{expandido ? "▲" : "▼"}</span>
+                        </div>
+                      </button>
+
+                      {/* Detalhe expandido */}
+                      {expandido && (
+                        <div style={{ padding:"0 16px 14px",
+                          borderTop:"1px solid #f1f5f9" }}>
+                          {r.situacao && (
+                            <div style={{ marginTop:10 }}>
+                              <div style={{ fontSize:10, fontWeight:700, color:"#E28743",
+                                textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:4 }}>
+                                A — Situação
+                              </div>
+                              <div style={{ fontSize:13, color:"#334155", lineHeight:1.5 }}>{r.situacao}</div>
+                            </div>
+                          )}
+                          {r.emocao && (
+                            <div style={{ marginTop:10 }}>
+                              <div style={{ fontSize:10, fontWeight:700, color:"#E28743",
+                                textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:4 }}>
+                                B — Emoção
+                              </div>
+                              <div style={{ fontSize:13, color:"#334155" }}>
+                                {r.emocao}
+                                {r.intensidade_antes != null && ` — ${r.intensidade_antes}% de intensidade`}
+                              </div>
+                            </div>
+                          )}
+                          {r.pensamento && (
+                            <div style={{ marginTop:10 }}>
+                              <div style={{ fontSize:10, fontWeight:700, color:"#E28743",
+                                textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:4 }}>
+                                C — Pensamento automático
+                              </div>
+                              <div style={{ fontSize:13, color:"#334155", lineHeight:1.5,
+                                background:"#f8fafc", borderRadius:8, padding:"8px 10px",
+                                borderLeft:"3px solid #e2e8f0" }}>
+                                "{r.pensamento}"
+                              </div>
+                            </div>
+                          )}
+                          {r.resposta_racional && (
+                            <div style={{ marginTop:10 }}>
+                              <div style={{ fontSize:10, fontWeight:700, color:"#E28743",
+                                textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:4 }}>
+                                D — Resposta racional
+                              </div>
+                              <div style={{ fontSize:13, color:"#334155", lineHeight:1.5,
+                                background:"#f0fdf4", borderRadius:8, padding:"8px 10px",
+                                borderLeft:"3px solid #bbf7d0" }}>
+                                "{r.resposta_racional}"
+                              </div>
+                            </div>
+                          )}
+                          {r.intensidade_depois != null && (
+                            <div style={{ marginTop:10, display:"flex", gap:16, alignItems:"center" }}>
+                              <div>
+                                <div style={{ fontSize:10, color:"#94a3b8" }}>Antes</div>
+                                <div style={{ fontSize:16, fontWeight:800, color:"#ef4444" }}>
+                                  {r.intensidade_antes}%
+                                </div>
+                              </div>
+                              <div style={{ fontSize:14, color:"#94a3b8" }}>→</div>
+                              <div>
+                                <div style={{ fontSize:10, color:"#94a3b8" }}>Depois</div>
+                                <div style={{ fontSize:16, fontWeight:800, color:corReducao }}>
+                                  {r.intensidade_depois}%
+                                </div>
+                              </div>
+                              {reducao != null && (
+                                <div style={{ fontSize:12, fontWeight:700, color:corReducao,
+                                  background: reducao > 0 ? "#f0fdf4" : "#fff1f2",
+                                  padding:"3px 10px", borderRadius:20 }}>
+                                  {reducao > 0 ? `↓ ${reducao} pts` : `↑ ${Math.abs(reducao)} pts`}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {humorApp.length === 0 && registrosApp.length === 0 && (
+              <div style={{ textAlign:"center", padding:"60px 0", color:"#94a3b8" }}>
+                <div style={{ fontSize:40, marginBottom:12 }}>📱</div>
+                <div style={{ fontSize:15, fontWeight:700, color:"#64748b", marginBottom:6 }}>
+                  Nenhum dado do app ainda
+                </div>
+                <div style={{ fontSize:13, lineHeight:1.6 }}>
+                  O paciente ainda não enviou humor ou registros pelo app.
+                </div>
+              </div>
+            )}
+
+          </div>
+        );
+      })()}
+
     </div>
   );
 };
@@ -1420,13 +2116,30 @@ const MOLDES_TECNICAS = {
 
 // Categorias visuais fixas para o fluxo socrático (mapeadas por índice do eixo)
 const CATEGORIAS_SOCRATICAS = [
-  { label: "Investigação",                       cor: "#6366f1", descricaoCategoria: "Examinar a validade do pensamento" },
+  { label: "Investigação",                       cor: "#E28743", descricaoCategoria: "Examinar a validade do pensamento" },
   { label: "Exploração de perspectiva",          cor: "#0ea5e9", descricaoCategoria: "Ampliar o ponto de vista" },
   { label: "Construção de resposta alternativa", cor: "#10b981", descricaoCategoria: "Gerar perspectiva adaptativa" },
 ];
 
 // ─── HELPER: normaliza plano retornado pela IA para o formato de display ────────
 const normalizeAIPlano = (ai, paciente) => {
+  // Novo formato: IA retorna fluxoSocratico + itensRevisar + focoPrincipal + obs
+  if (ai.fluxoSocratico) {
+    return {
+      id: ai.id,
+      objetivo: ai.objetivo,
+      itensRevisar: ai.itensRevisar || ["Revisar atividades entre sessões"],
+      focoPrincipal: ai.focoPrincipal || ai.objetivo,
+      fluxoSocratico: ai.fluxoSocratico,
+      tecnicas: ai.tecnicas || [],
+      tarefa: ai.tarefa || "",
+      obs: ai.obs || ai.observacoes || "",
+      duracaoSugerida: ai.duracaoSugerida || "50 min",
+      urgencia: ai.urgencia || (paciente.risco === "alto" ? "alto" : "normal"),
+      contextoUtilizado: ai.contextoUtilizado || ai.sessoes_contexto || 1,
+    };
+  }
+  // Formato legado: array flat de perguntas (DB antigo ou IA anterior)
   const pergs = ai.perguntas || [];
   const eixos = [
     { eixo: "Investigação", descricao: "Analisar e examinar o pensamento automático", perguntas: pergs.slice(0,2).map((t,i) => ({ id:i+1, texto:t })) },
@@ -1435,6 +2148,7 @@ const normalizeAIPlano = (ai, paciente) => {
   ].filter(e => e.perguntas.length > 0);
   const ult = paciente.sessoesList?.[0];
   return {
+    id: ai.id,
     objetivo: ai.objetivo,
     itensRevisar: ult
       ? [`Verificar tarefa: ${ult.tarefa || "—"}`, `Resultado: ${ult.resultadoTarefa || "—"}`]
@@ -1446,11 +2160,12 @@ const normalizeAIPlano = (ai, paciente) => {
     obs: ai.observacoes || "",
     duracaoSugerida: "50 min",
     urgencia: paciente.risco === "alto" ? "alto" : "normal",
+    contextoUtilizado: ai.sessoes_contexto || 1,
   };
 };
 
 // ─── TELA: PLANO DA SESSÃO ──────────────────────────────────────────────────────
-const TelaPlano = ({ paciente, isMobile = false, terapeutaId, onAgendar, proximaSessao }) => {
+const TelaPlano = ({ paciente, isMobile = false, terapeutaId, onAgendar, proximaSessao, terapeutaPerfil }) => {
   const planoMock = PLANOS_GERADOS[paciente.id];
   const labels = LABELS_POR_LINHA[paciente.linha || "tcc"];
 
@@ -1473,6 +2188,8 @@ const TelaPlano = ({ paciente, isMobile = false, terapeutaId, onAgendar, proxima
   const [enviandoTarefa, setEnviandoTarefa] = useState(false);
   const [tarefaEnviada, setTarefaEnviada] = useState(null); // null | { id, descricao }
   const [erroEnvioTarefa, setErroEnvioTarefa] = useState("");
+  const [planoConfirmado, setPlanoConfirmado] = useState(false);
+  const [confirmando, setConfirmando] = useState(false);
 
   const plano = planoMock ?? planoCurrent;
 
@@ -1488,14 +2205,37 @@ const TelaPlano = ({ paciente, isMobile = false, terapeutaId, onAgendar, proxima
     setMoldeAberto(null);
     setTarefaEnviada(null);
     setErroEnvioTarefa("");
+    setPlanoConfirmado(false);
+    setConfirmando(false);
   }, [paciente.id]);
 
   // carrega plano salvo do Supabase ao abrir (só para pacientes reais sem mock)
   useEffect(() => {
     const pid = paciente?.id;
     if (typeof pid !== "string" || planoMock) return;
+    const proximoNumero = (paciente.sessoes || 0) + 1;
     buscarPlano(pid).then(({ data }) => {
-      if (data) setPlanoCurrent(normalizeAIPlano(data, paciente));
+      if (data && data.numero_proxima === proximoNumero) {
+        setPlanoCurrent(normalizeAIPlano(data, paciente));
+        if (data.status === 'confirmado') setPlanoConfirmado(true);
+      }
+    });
+  }, [paciente.id]);
+
+  // carrega tarefa pendente do Supabase para persistir estado entre abas
+  // só considera tarefas criadas após a última sessão (evita mostrar tarefa de ciclos anteriores)
+  useEffect(() => {
+    const pid = paciente?.id;
+    if (typeof pid !== "string") return;
+    const ultimaSessao = paciente.sessoesList?.[0];
+    const corteISO = ultimaSessao?.created_at ?? null;
+    listarTarefas(pid).then(({ data }) => {
+      if (!data || data.length === 0) return;
+      const ativa = data.find(t =>
+        t.status !== 'concluida' &&
+        (!corteISO || new Date(t.created_at) > new Date(corteISO))
+      );
+      if (ativa) setTarefaEnviada({ id: ativa.id, descricao: ativa.descricao });
     });
   }, [paciente.id]);
 
@@ -1515,26 +2255,33 @@ const TelaPlano = ({ paciente, isMobile = false, terapeutaId, onAgendar, proxima
   }, [paciente.id, plano?.objetivo, plano?.tarefa]);
 
   const gerarPlano = async () => {
-    const ultimaSessao = paciente.sessoesList?.[0];
-    if (!ultimaSessao) return;
+    if (!(paciente.sessoesList?.length > 0)) return;
+    const janela = terapeutaPerfil?.janela_contexto || 3;
+    const sessoesContexto = (paciente.sessoesList || []).slice(0, janela);
     setGerando(true);
     setErroIA("");
     setProviderIA(null);
     try {
-      const { plano: ai, provider } = await gerarPlanoSessao(paciente, ultimaSessao, setProviderIA);
+      const { plano: ai, provider } = await gerarPlanoSessao(paciente, sessoesContexto, janela, setProviderIA);
       const convertido = normalizeAIPlano(ai, paciente);
       setPlanoCurrent(convertido);
       if (terapeutaId && terapeutaId !== "demo") {
-        await salvarPlano(terapeutaId, paciente.id, {
+        const perguntasParaSalvar = ai.fluxoSocratico
+          ? ai.fluxoSocratico.flatMap(e => (e.perguntas || []).map(p => p.texto || p))
+          : (ai.perguntas || []);
+        const { data: planoSalvo } = await salvarPlano(terapeutaId, paciente.id, {
+          sessao_origem_id: sessoesContexto[0]?.id ?? null,
           numero_proxima: (paciente.sessoes || 0) + 1,
           objetivo: ai.objetivo,
           tecnicas: ai.tecnicas,
-          perguntas: ai.perguntas,
-          distorcoes_foco: ai.distorcoes_foco,
+          perguntas: perguntasParaSalvar,
+          distorcoes_foco: ai.distorcoes_foco || [],
           tarefa: ai.tarefa,
-          observacoes: ai.observacoes,
+          observacoes: ai.obs || ai.observacoes || "",
           gerado_por: provider,
+          contextoUtilizado: convertido.contextoUtilizado || 1,
         });
+        if (planoSalvo?.id) setPlanoCurrent(prev => prev ? { ...prev, id: planoSalvo.id } : prev);
       }
     } catch (err) {
       setErroIA(`Erro ao gerar plano: ${err.message}`);
@@ -1562,11 +2309,11 @@ const TelaPlano = ({ paciente, isMobile = false, terapeutaId, onAgendar, proxima
           <div style={{ fontSize:32, marginBottom:12 }}>🎯</div>
           {podeGerar ? (
             <>
-              <div style={{ fontSize:15, fontWeight:700, color:"#0f172a", marginBottom:8 }}>
+              <div style={{ fontSize:15, fontWeight:700, color:"#2C302E", marginBottom:8 }}>
                 Nenhum plano gerado para esta sessão
               </div>
               <div style={{ fontSize:13, marginBottom:24 }}>
-                Gere um plano personalizado com base nas últimas {Math.min(paciente.sessoesList.length, 3)} sessões registradas.
+                Gere um plano personalizado com base nas últimas {Math.min(paciente.sessoesList.length, terapeutaPerfil?.janela_contexto || 3)} sessões registradas.
               </div>
               {erroIA && (
                 <div style={{ marginBottom:16, padding:"10px 14px", background:"#fff1f2",
@@ -1574,12 +2321,25 @@ const TelaPlano = ({ paciente, isMobile = false, terapeutaId, onAgendar, proxima
                   {erroIA}
                 </div>
               )}
-              <button onClick={gerarPlano} disabled={gerando}
-                style={{ padding:"12px 32px", background: gerando ? "#a5b4fc" : "#6366f1",
-                  color:"#fff", border:"none", borderRadius:10, fontSize:14, fontWeight:700,
-                  cursor: gerando ? "default" : "pointer" }}>
-                {gerando ? "Gerando plano…" : "🤖 Gerar plano com IA"}
-              </button>
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:8, marginBottom:4 }}>
+                <button onClick={gerarPlano} disabled={gerando}
+                  style={{ padding:"12px 32px", background: gerando ? "#F0C08A" : "#E28743",
+                    color:"#fff", border:"none", borderRadius:10, fontSize:14, fontWeight:700,
+                    cursor: gerando ? "default" : "pointer" }}>
+                  {gerando ? "Gerando plano…" : "🤖 Gerar plano com IA"}
+                </button>
+                {(() => {
+                  const janela = terapeutaPerfil?.janela_contexto || 3;
+                  const n = Math.min((paciente.sessoesList || []).length, janela);
+                  if (n === 0) return null;
+                  return (
+                    <span style={{ fontSize:11, fontWeight:600, color:"#6366f1", background:"#eef2ff",
+                      border:"1px solid #c7d2fe", borderRadius:10, padding:"2px 9px", whiteSpace:"nowrap" }}>
+                      {n === 1 ? "1 sessão no contexto" : `${n} sessões no contexto`}
+                    </span>
+                  );
+                })()}
+              </div>
               {providerIA && (
                 <div style={{ marginTop:8, fontSize:11, color:"#94a3b8" }}>
                   Usando: {providerIA === "gemini" ? "Google Gemini" : "Claude"}
@@ -1588,7 +2348,7 @@ const TelaPlano = ({ paciente, isMobile = false, terapeutaId, onAgendar, proxima
             </>
           ) : (
             <>
-              <div style={{ fontSize:15, fontWeight:700, color:"#0f172a", marginBottom:6 }}>
+              <div style={{ fontSize:15, fontWeight:700, color:"#2C302E", marginBottom:6 }}>
                 Plano não disponível
               </div>
               <div style={{ fontSize:13 }}>
@@ -1649,13 +2409,13 @@ const TelaPlano = ({ paciente, isMobile = false, terapeutaId, onAgendar, proxima
   };
 
   return (
-    <div style={{ height:"100%", overflowY:"auto", padding: isMobile ? "16px" : "24px 28px" }}>
+    <div style={{ height:"100%", overflowY:"auto", padding: isMobile ? "16px" : "24px 28px", background:"rgba(241,167,166,0.05)" }}>
       {/* Header */}
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:24 }}>
         <div>
           <div style={{ fontSize:11, fontWeight:700, color:"#94a3b8", textTransform:"uppercase",
             letterSpacing:"0.08em", marginBottom:4 }}>Plano sugerido pela IA</div>
-          <div style={{ fontSize: isMobile ? 16 : 20, fontWeight:800, color:"#0f172a" }}>
+          <div style={{ fontSize: isMobile ? 16 : 20, fontWeight:800, color:"#2C302E" }}>
             Sessão {paciente.sessoes + 1} — {paciente.nome.split(" ")[0]}
           </div>
           <div style={{ fontSize:13, color:"#64748b", marginTop:2 }}>
@@ -1670,7 +2430,7 @@ const TelaPlano = ({ paciente, isMobile = false, terapeutaId, onAgendar, proxima
             </div>
           )}
           <button onClick={copiarPlano}
-            style={{ padding:"8px 18px", background: copiado ? "#d1fae5" : "#6366f1",
+            style={{ padding:"8px 18px", background: copiado ? "#d1fae5" : "#E28743",
               color: copiado ? "#065f46" : "#fff", border:"none", borderRadius:8,
               fontSize:13, fontWeight:700, cursor:"pointer", transition:"all 0.2s" }}>
             {copiado ? "✓ Copiado!" : "Copiar plano"}
@@ -1684,7 +2444,7 @@ const TelaPlano = ({ paciente, isMobile = false, terapeutaId, onAgendar, proxima
         <span style={{ fontSize:16, marginTop:1 }}>🤖</span>
         <div>
           <div style={{ fontSize:12, fontWeight:700, color:"#0c4a6e", marginBottom:2 }}>
-            Gerado com base no histórico das últimas {paciente.sessoes} sessões
+            Gerado com base nas últimas {plano.contextoUtilizado || 1} {(plano.contextoUtilizado || 1) === 1 ? "sessão" : "sessões"} do histórico
           </div>
           <div style={{ fontSize:11, color:"#0369a1" }}>
             Sugestões baseadas em protocolos TCC e ACT. O fluxo socrático segue sequência clínica — siga a ordem dos eixos e edite cada pergunta conforme seu estilo. Você tem a palavra final.
@@ -1704,7 +2464,7 @@ const TelaPlano = ({ paciente, isMobile = false, terapeutaId, onAgendar, proxima
         padding:"18px 20px", marginBottom:16 }}>
         <div style={{ fontSize:11, fontWeight:700, color:"#94a3b8", textTransform:"uppercase",
           letterSpacing:"0.07em", marginBottom:8 }}>🎯 Objetivo da sessão</div>
-        <div style={{ fontSize:14, color:"#0f172a", fontWeight:600, lineHeight:1.6 }}>
+        <div style={{ fontSize:14, color:"#2C302E", fontWeight:600, lineHeight:1.6 }}>
           {plano.objetivo}
         </div>
       </div>
@@ -1728,7 +2488,7 @@ const TelaPlano = ({ paciente, isMobile = false, terapeutaId, onAgendar, proxima
           borderRadius:12, padding:"18px 20px" }}>
           <div style={{ fontSize:11, fontWeight:700, color:"#94a3b8", textTransform:"uppercase",
             letterSpacing:"0.07em", marginBottom:10 }}>🔍 Foco principal</div>
-          <div style={{ fontSize:13, color:"#0f172a", lineHeight:1.7,
+          <div style={{ fontSize:13, color:"#2C302E", lineHeight:1.7,
             borderLeft:`3px solid ${paciente.cor}`, paddingLeft:12 }}>
             {plano.focoPrincipal}
           </div>
@@ -1789,7 +2549,7 @@ const TelaPlano = ({ paciente, isMobile = false, terapeutaId, onAgendar, proxima
                 </div>
                 {/* Nome do eixo específico */}
                 <div style={{ paddingLeft:4, marginBottom:4 }}>
-                  <span style={{ fontSize:12, fontWeight:700, color:"#0f172a" }}>{eixo.eixo}</span>
+                  <span style={{ fontSize:12, fontWeight:700, color:"#2C302E" }}>{eixo.eixo}</span>
                 </div>
                 <div style={{ fontSize:11, color:"#94a3b8", lineHeight:1.5, paddingLeft:4 }}>
                   {eixo.descricao}
@@ -1833,7 +2593,7 @@ const TelaPlano = ({ paciente, isMobile = false, terapeutaId, onAgendar, proxima
                       ) : (
                         <div style={{ padding:"10px 14px", fontSize:13,
                           color:"#334155", lineHeight:1.6,
-                          borderLeft:`3px solid ${foiEditada ? paciente.cor : "#6366f1"}` }}>
+                          borderLeft:`3px solid ${foiEditada ? paciente.cor : "#E28743"}` }}>
                           {textoAtual}
                           {foiEditada && (
                             <span style={{ marginLeft:8, fontSize:10, fontWeight:600,
@@ -1922,16 +2682,16 @@ const TelaPlano = ({ paciente, isMobile = false, terapeutaId, onAgendar, proxima
                     )}
                     {moldesCustom[t] && (
                       <span style={{ position:"absolute", top:-3, left:-3, width:8, height:8,
-                        borderRadius:"50%", background:"#6366f1",
+                        borderRadius:"50%", background:"#E28743",
                         border:"1.5px solid #fff" }} />
                     )}
                   </div>
                   <button
                     onClick={() => setEditando(editando === `tecnica-${t}` ? null : `tecnica-${t}`)}
                     style={{ fontSize:11, padding:"2px 8px", borderRadius:6, cursor:"pointer",
-                      border: editando === `tecnica-${t}` ? "1.5px solid #6366f1" : "1px solid #e2e8f0",
-                      background: editando === `tecnica-${t}` ? "#f0f0ff" : "#f8fafc",
-                      color: editando === `tecnica-${t}` ? "#6366f1" : "#64748b",
+                      border: editando === `tecnica-${t}` ? "1.5px solid #E28743" : "1px solid #e2e8f0",
+                      background: editando === `tecnica-${t}` ? "#FEF3E2" : "#f8fafc",
+                      color: editando === `tecnica-${t}` ? "#E28743" : "#64748b",
                       fontWeight: editando === `tecnica-${t}` ? 700 : 500, transition:"all 0.12s" }}>
                     🖊 personalizar
                   </button>
@@ -1939,9 +2699,9 @@ const TelaPlano = ({ paciente, isMobile = false, terapeutaId, onAgendar, proxima
                     <button
                       onClick={() => setMoldeAberto(aberto ? null : t)}
                       style={{ fontSize:11, padding:"2px 8px", borderRadius:6, cursor:"pointer",
-                        border: aberto ? "1.5px solid #6366f1" : "1px solid #e2e8f0",
-                        background: aberto ? "#f0f0ff" : "#f8fafc",
-                        color: aberto ? "#6366f1" : "#64748b",
+                        border: aberto ? "1.5px solid #E28743" : "1px solid #e2e8f0",
+                        background: aberto ? "#FEF3E2" : "#f8fafc",
+                        color: aberto ? "#E28743" : "#64748b",
                         fontWeight: aberto ? 700 : 500, transition:"all 0.12s" }}>
                       📋 molde
                     </button>
@@ -1952,7 +2712,7 @@ const TelaPlano = ({ paciente, isMobile = false, terapeutaId, onAgendar, proxima
                 {editando === `tecnica-${t}` && (
                   <div style={{ marginTop:8, padding:"14px 16px",
                     background:"#f8fafc", border:"1.5px solid #e2e8f0",
-                    borderRadius:10, borderTop:"3px solid #6366f1" }}>
+                    borderRadius:10, borderTop:"3px solid #E28743" }}>
                     <div style={{ fontSize:11, fontWeight:700, color:"#475569",
                       textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:6 }}>
                       Anotações para "{t}"
@@ -1964,7 +2724,7 @@ const TelaPlano = ({ paciente, isMobile = false, terapeutaId, onAgendar, proxima
                       placeholder={`Personalize como aplicar esta técnica na sessão de hoje…`}
                       style={{ width:"100%", padding:"8px 10px",
                         border:"1.5px solid #e2e8f0", borderRadius:8,
-                        fontSize:12, color:"#0f172a", lineHeight:1.6,
+                        fontSize:12, color:"#2C302E", lineHeight:1.6,
                         resize:"vertical", outline:"none",
                         boxSizing:"border-box", minHeight:64,
                         fontFamily:"inherit", background:"#fff" }}
@@ -1978,7 +2738,7 @@ const TelaPlano = ({ paciente, isMobile = false, terapeutaId, onAgendar, proxima
                       </button>
                       <button
                         onClick={() => setEditando(null)}
-                        style={{ fontSize:11, color:"#6366f1", background:"none",
+                        style={{ fontSize:11, color:"#E28743", background:"none",
                           border:"none", cursor:"pointer", fontWeight:700, padding:"2px 8px" }}>
                         Salvar
                       </button>
@@ -1990,8 +2750,8 @@ const TelaPlano = ({ paciente, isMobile = false, terapeutaId, onAgendar, proxima
                 {aberto && molde && (
                   <div style={{ marginTop:8, marginLeft:0, padding:"16px",
                     background:"#f8fafc", border:"1.5px solid #e2e8f0",
-                    borderRadius:10, borderTop:"3px solid #6366f1" }}>
-                    <div style={{ fontSize:12, fontWeight:700, color:"#0f172a", marginBottom:4 }}>
+                    borderRadius:10, borderTop:"3px solid #E28743" }}>
+                    <div style={{ fontSize:12, fontWeight:700, color:"#2C302E", marginBottom:4 }}>
                       {t}
                     </div>
                     <div style={{ fontSize:11, color:"#64748b", marginBottom:14 }}>
@@ -2010,7 +2770,7 @@ const TelaPlano = ({ paciente, isMobile = false, terapeutaId, onAgendar, proxima
                               placeholder={campo.placeholder}
                               style={{ width:"100%", padding:"8px 10px",
                                 border:"1.5px solid #e2e8f0", borderRadius:8,
-                                fontSize:12, color:"#0f172a", lineHeight:1.6,
+                                fontSize:12, color:"#2C302E", lineHeight:1.6,
                                 resize:"vertical", outline:"none",
                                 boxSizing:"border-box", minHeight:64,
                                 fontFamily:"inherit", background:"#fff" }}
@@ -2023,7 +2783,7 @@ const TelaPlano = ({ paciente, isMobile = false, terapeutaId, onAgendar, proxima
                               placeholder={campo.placeholder}
                               style={{ width:"100%", padding:"7px 10px",
                                 border:"1.5px solid #e2e8f0", borderRadius:8,
-                                fontSize:12, color:"#0f172a", outline:"none",
+                                fontSize:12, color:"#2C302E", outline:"none",
                                 boxSizing:"border-box", background:"#fff" }}
                             />
                           )}
@@ -2074,7 +2834,7 @@ const TelaPlano = ({ paciente, isMobile = false, terapeutaId, onAgendar, proxima
               </button>
             )}
             <button onClick={() => editando === "tarefa" ? handleSalvarTarefa() : setEditando("tarefa")}
-              style={{ fontSize:11, color:"#6366f1", background:"none", border:"none",
+              style={{ fontSize:11, color:"#E28743", background:"none", border:"none",
                 cursor:"pointer", fontWeight:700, padding:"2px 8px" }}>
               {editando === "tarefa" ? "Salvar" : "Editar"}
             </button>
@@ -2082,8 +2842,8 @@ const TelaPlano = ({ paciente, isMobile = false, terapeutaId, onAgendar, proxima
         </div>
         {editando === "tarefa" ? (
           <textarea value={tarefaCustom} onChange={e => setTarefaCustom(e.target.value)}
-            style={{ width:"100%", padding:"10px 12px", border:"1.5px solid #6366f1",
-              borderRadius:8, fontSize:13, color:"#0f172a", lineHeight:1.6,
+            style={{ width:"100%", padding:"10px 12px", border:"1.5px solid #E28743",
+              borderRadius:8, fontSize:13, color:"#2C302E", lineHeight:1.6,
               resize:"vertical", outline:"none", boxSizing:"border-box", minHeight:80 }}/>
         ) : (
           <div style={{ fontSize:13, color:"#334155", lineHeight:1.6 }}>{tarefaCustom}</div>
@@ -2115,12 +2875,49 @@ const TelaPlano = ({ paciente, isMobile = false, terapeutaId, onAgendar, proxima
         {editando === "obs" ? (
           <textarea value={obsCustom} onChange={e => setObsCustom(e.target.value)}
             style={{ width:"100%", padding:"10px 12px", border:"1.5px solid #f59e0b",
-              borderRadius:8, fontSize:13, color:"#0f172a", lineHeight:1.6,
+              borderRadius:8, fontSize:13, color:"#2C302E", lineHeight:1.6,
               resize:"vertical", outline:"none", boxSizing:"border-box", minHeight:80 }}/>
         ) : (
           <div style={{ fontSize:13, color:"#78350f", lineHeight:1.6 }}>{obsCustom}</div>
         )}
       </div>
+
+      {/* Confirmar plano */}
+      {plano && planoCurrent?.id && terapeutaId && terapeutaId !== "demo" && (
+        <div style={{ marginBottom:12 }}>
+          {planoConfirmado ? (
+            <div style={{ background:"#f0fdf4", border:"1px solid #bbf7d0", borderRadius:12,
+              padding:"12px 20px", display:"flex", alignItems:"center", gap:10 }}>
+              <span style={{ fontSize:16 }}>✅</span>
+              <div>
+                <div style={{ fontSize:13, fontWeight:700, color:"#166534" }}>Plano confirmado</div>
+                <div style={{ fontSize:11, color:"#15803d" }}>Revisão concluída e plano aprovado</div>
+              </div>
+              <button onClick={() => setPlanoConfirmado(false)}
+                style={{ marginLeft:"auto", fontSize:11, color:"#16a34a", background:"none",
+                  border:"none", cursor:"pointer", textDecoration:"underline" }}>
+                Reabrir
+              </button>
+            </div>
+          ) : (
+            <button
+              disabled={confirmando}
+              onClick={async () => {
+                setConfirmando(true);
+                await atualizarPlano(planoCurrent.id, { status: 'confirmado' });
+                setConfirmando(false);
+                setPlanoConfirmado(true);
+              }}
+              style={{ width:"100%", padding:"12px 20px",
+                background: confirmando ? "#F0C08A" : "#E28743",
+                color:"#fff", border:"none", borderRadius:12, fontSize:13, fontWeight:700,
+                cursor: confirmando ? "default" : "pointer", display:"flex",
+                alignItems:"center", justifyContent:"center", gap:8 }}>
+              {confirmando ? "Confirmando…" : "✓ Salvar e confirmar plano"}
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Agendar próxima sessão — só aparece se não há sessão agendada */}
       {onAgendar && proximaSessao && proximaSessao !== "Não agendado" && (
@@ -2160,9 +2957,9 @@ const TelaPlano = ({ paciente, isMobile = false, terapeutaId, onAgendar, proxima
       )}
 
       {/* Enviar tarefa para o app do paciente */}
-      <div style={{ background:"#f5f3ff", border:"1px solid #c4b5fd", borderRadius:12,
+      <div style={{ background:"#FEF3E2", border:"1px solid #F0D4B0", borderRadius:12,
         padding:"16px 20px", marginBottom:12 }}>
-        <div style={{ fontSize:11, fontWeight:700, color:"#7c3aed", textTransform:"uppercase",
+        <div style={{ fontSize:11, fontWeight:700, color:"#C47535", textTransform:"uppercase",
           letterSpacing:"0.07em", marginBottom:10 }}>📱 App do paciente</div>
         {tarefaEnviada ? (
           <div style={{ display:"flex", alignItems:"flex-start", gap:10 }}>
@@ -2175,14 +2972,14 @@ const TelaPlano = ({ paciente, isMobile = false, terapeutaId, onAgendar, proxima
               </div>
             </div>
             <button onClick={() => setTarefaEnviada(null)}
-              style={{ fontSize:11, color:"#7c3aed", background:"none", border:"none",
+              style={{ fontSize:11, color:"#C47535", background:"none", border:"none",
                 cursor:"pointer", textDecoration:"underline", flexShrink:0 }}>
               Reenviar
             </button>
           </div>
         ) : (
           <div>
-            <div style={{ fontSize:12, color:"#6d28d9", marginBottom:12, lineHeight:1.5 }}>
+            <div style={{ fontSize:12, color:"#8A4020", marginBottom:12, lineHeight:1.5 }}>
               Envie a tarefa de casa para {paciente.nome.split(" ")[0]} acompanhar no app.
               O paciente poderá registrar o cumprimento e você receberá os relatórios aqui.
             </div>
@@ -2193,8 +2990,8 @@ const TelaPlano = ({ paciente, isMobile = false, terapeutaId, onAgendar, proxima
               </div>
             )}
             <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
-              <div style={{ fontSize:12, color:"#4c1d95", background:"#ede9fe",
-                border:"1px solid #c4b5fd", borderRadius:8, padding:"7px 12px", flex:1,
+              <div style={{ fontSize:12, color:"#8A4020", background:"#FEF3E2",
+                border:"1px solid #F0D4B0", borderRadius:8, padding:"7px 12px", flex:1,
                 minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
                 {tarefaCustom || plano?.tarefa || "Nenhuma tarefa definida"}
               </div>
@@ -2219,7 +3016,7 @@ const TelaPlano = ({ paciente, isMobile = false, terapeutaId, onAgendar, proxima
                     setTarefaEnviada({ id: data?.id, descricao: desc });
                   }
                 }}
-                style={{ padding:"8px 16px", background: enviandoTarefa ? "#a5b4fc" : "#6d28d9",
+                style={{ padding:"8px 16px", background: enviandoTarefa ? "#F0C08A" : "#E28743",
                   color:"#fff", border:"none", borderRadius:8, fontSize:12, fontWeight:700,
                   cursor: enviandoTarefa ? "default" : "pointer", flexShrink:0, whiteSpace:"nowrap" }}>
                 {enviandoTarefa ? "Enviando…" : "📤 Enviar tarefa"}
@@ -2300,6 +3097,7 @@ const TelaImportar = ({ paciente, isMobile = false, terapeutaId, onSessaoSalva, 
   const handleSalvar = async () => {
     if (!extraido) return;
     setSalvando(true);
+    setErroIA("");
     const proximoNumero = (paciente.sessoes || 0) + 1;
     const dataStr = agendamentoVinculadoId
       ? new Date(agendamentosVinculaveis.find(a => a.id === agendamentoVinculadoId)?.inicio || Date.now())
@@ -2318,13 +3116,19 @@ const TelaImportar = ({ paciente, isMobile = false, terapeutaId, onSessaoSalva, 
       evolucao: extraido.resumo || "",
       alertas: extraido.alertas || [],
       obs: "",
-      humor_inicio: extraido.humor_inicio,
-      humor_fim: extraido.humor_fim,
+      humor_inicio: Number.isInteger(extraido.humor_inicio) ? extraido.humor_inicio : null,
+      humor_fim: Number.isInteger(extraido.humor_fim) ? extraido.humor_fim : null,
     };
     const pacienteReal = terapeutaId && terapeutaId !== "demo" && typeof paciente.id === "string";
+    if (terapeutaId && terapeutaId !== "demo" && !pacienteReal) {
+      setSalvando(false);
+      setErroIA("Paciente não encontrado no banco de dados. Recarregue a página e tente novamente.");
+      return;
+    }
+    let sessaoCriada = null;
     try {
       if (pacienteReal) {
-        await criarSessao(terapeutaId, paciente.id, {
+        const { data, error: erroSessao } = await criarSessao(terapeutaId, paciente.id, {
           numero: proximoNumero,
           data: dataStr,
           resumo: extraido.resumo,
@@ -2335,20 +3139,24 @@ const TelaImportar = ({ paciente, isMobile = false, terapeutaId, onSessaoSalva, 
           alertas: extraido.alertas,
           resultado_tarefa: extraido.resultado_tarefa,
           tarefa_proxima: extraido.tarefa_proxima,
-          humor_inicio: extraido.humor_inicio,
-          humor_fim: extraido.humor_fim,
+          humor_inicio: Number.isInteger(extraido.humor_inicio) ? extraido.humor_inicio : null,
+          humor_fim: Number.isInteger(extraido.humor_fim) ? extraido.humor_fim : null,
           notas_raw: textoManual,
           ...(agendamentoVinculadoId ? { agendamento_id: agendamentoVinculadoId } : {}),
         });
+        if (erroSessao) throw new Error(erroSessao.message || JSON.stringify(erroSessao));
+        sessaoCriada = data;
         await atualizarPaciente(paciente.id, { sessoes: proximoNumero });
         if (agendamentoVinculadoId) {
           await atualizarAgendamento(agendamentoVinculadoId, { status: "realizado" });
           onAgendamentoRealizado?.(agendamentoVinculadoId);
         }
       }
-    } finally {
       setSalvando(false);
-      onSessaoSalva?.(novaSessao);
+      onSessaoSalva?.({ ...novaSessao, id: sessaoCriada?.id ?? null });
+    } catch (err) {
+      setSalvando(false);
+      setErroIA(`Erro ao salvar sessão: ${err.message}`);
     }
   };
 
@@ -2356,7 +3164,7 @@ const TelaImportar = ({ paciente, isMobile = false, terapeutaId, onSessaoSalva, 
     <div style={{ padding: isMobile ? "16px" : "28px", height:"100%", overflowY:"auto" }}>
       <div style={{ fontSize:11, fontWeight:700, color:"#94a3b8", textTransform:"uppercase",
         letterSpacing:"0.08em", marginBottom:4 }}>Importar relatório</div>
-      <div style={{ fontSize:20, fontWeight:800, color:"#0f172a", marginBottom:6 }}>
+      <div style={{ fontSize:20, fontWeight:800, color:"#2C302E", marginBottom:6 }}>
         Nova sessão — {paciente.nome.split(" ")[0]}
       </div>
       <div style={{ fontSize:13, color:"#64748b", marginBottom:28 }}>
@@ -2376,14 +3184,14 @@ const TelaImportar = ({ paciente, isMobile = false, terapeutaId, onSessaoSalva, 
         onDragLeave={() => setDrag(false)}
         onDrop={e => { e.preventDefault(); setDrag(false); lerArquivo(e.dataTransfer.files[0]); }}
         onClick={() => fileInputRef.current?.click()}
-        style={{ border: drag ? "2px solid #6366f1" : "2px dashed #cbd5e1",
+        style={{ border: drag ? "2px solid #E28743" : "2px dashed #cbd5e1",
           borderRadius:16, padding:"48px 24px", textAlign:"center",
-          cursor:"pointer", background: drag ? "#f0f0ff" : "#fafafa",
+          cursor:"pointer", background: drag ? "#FEF3E2" : "#fafafa",
           transition:"all 0.2s", marginBottom:20 }}>
         <input ref={fileInputRef} type="file" accept=".txt"
           style={{ display:"none" }} onChange={e => lerArquivo(e.target.files[0])} />
         <div style={{ fontSize:40, marginBottom:12 }}>📄</div>
-        <div style={{ fontSize:15, fontWeight:700, color:"#0f172a", marginBottom:6 }}>
+        <div style={{ fontSize:15, fontWeight:700, color:"#2C302E", marginBottom:6 }}>
           Arraste um arquivo .txt ou clique para selecionar
         </div>
         <div style={{ fontSize:12, color:"#94a3b8" }}>Para PDF/Word: copie e cole o texto abaixo</div>
@@ -2399,10 +3207,10 @@ const TelaImportar = ({ paciente, isMobile = false, terapeutaId, onSessaoSalva, 
           onChange={e => setTextoManual(e.target.value)}
           placeholder="Cole o texto das suas anotações da sessão…"
           style={{ width:"100%", height:120, padding:"12px", border:"1.5px solid #e2e8f0",
-            borderRadius:10, fontSize:13, color:"#0f172a", resize:"none",
+            borderRadius:10, fontSize:13, color:"#2C302E", resize:"none",
             outline:"none", boxSizing:"border-box", lineHeight:1.6, fontFamily:"inherit" }}/>
         <button onClick={() => processarTexto(textoManual)}
-          style={{ marginTop:8, padding:"10px 24px", background:"#6366f1",
+          style={{ marginTop:8, padding:"10px 24px", background:"#E28743",
             color:"#fff", border:"none", borderRadius:8, fontSize:13,
             fontWeight:700, cursor:"pointer" }}>
           🤖 Gerar rascunho com IA
@@ -2428,7 +3236,7 @@ const TelaImportar = ({ paciente, isMobile = false, terapeutaId, onSessaoSalva, 
     <div style={{ padding:"28px", display:"flex", flexDirection:"column",
       alignItems:"center", justifyContent:"center", height:"60%", textAlign:"center" }}>
       <div style={{ fontSize:36, marginBottom:20 }}>🧠</div>
-      <div style={{ fontSize:18, fontWeight:800, color:"#0f172a", marginBottom:8 }}>
+      <div style={{ fontSize:18, fontWeight:800, color:"#2C302E", marginBottom:8 }}>
         Analisando com IA…
       </div>
       <div style={{ fontSize:13, color:"#64748b", marginBottom:28, maxWidth:300 }}>
@@ -2439,7 +3247,7 @@ const TelaImportar = ({ paciente, isMobile = false, terapeutaId, onSessaoSalva, 
           Usando: {provider === "gemini" ? "Google Gemini" : "Claude (fallback)"}
         </div>
       )}
-      <div style={{ width:32, height:32, border:"3px solid #e2e8f0", borderTopColor:"#6366f1",
+      <div style={{ width:32, height:32, border:"3px solid #e2e8f0", borderTopColor:"#E28743",
         borderRadius:"50%", animation:"spin 0.8s linear infinite" }} />
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
@@ -2454,7 +3262,7 @@ const TelaImportar = ({ paciente, isMobile = false, terapeutaId, onSessaoSalva, 
             letterSpacing:"0.07em", marginBottom:4 }}>
             ✎ Rascunho gerado via {provider === "gemini" ? "Gemini" : "Claude"}
           </div>
-          <div style={{ fontSize:18, fontWeight:800, color:"#0f172a" }}>
+          <div style={{ fontSize:18, fontWeight:800, color:"#2C302E" }}>
             Rascunho gerado — Revise e edite antes de salvar
           </div>
           <div style={{ fontSize:12, color:"#64748b", marginTop:3 }}>
@@ -2552,11 +3360,11 @@ const TelaImportar = ({ paciente, isMobile = false, terapeutaId, onSessaoSalva, 
               <div onClick={() => setAgendamentoVinculadoId(null)}
                 style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 12px",
                   borderRadius:8, cursor:"pointer",
-                  border: agendamentoVinculadoId === null ? "1.5px solid #6366f1" : "1.5px solid #e2e8f0",
-                  background: agendamentoVinculadoId === null ? "#ede9fe" : "#fff" }}>
+                  border: agendamentoVinculadoId === null ? "1.5px solid #E28743" : "1.5px solid #e2e8f0",
+                  background: agendamentoVinculadoId === null ? "#FEF3E2" : "#fff" }}>
                 <div style={{ width:14, height:14, borderRadius:"50%", border:"2px solid",
-                  borderColor: agendamentoVinculadoId === null ? "#6366f1" : "#cbd5e1",
-                  background: agendamentoVinculadoId === null ? "#6366f1" : "transparent",
+                  borderColor: agendamentoVinculadoId === null ? "#E28743" : "#cbd5e1",
+                  background: agendamentoVinculadoId === null ? "#E28743" : "transparent",
                   flexShrink:0 }} />
                 <span style={{ fontSize:12, color:"#64748b", fontStyle:"italic" }}>
                   Sem vínculo
@@ -2571,21 +3379,21 @@ const TelaImportar = ({ paciente, isMobile = false, terapeutaId, onSessaoSalva, 
                   <div key={a.id} onClick={() => setAgendamentoVinculadoId(a.id)}
                     style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 12px",
                       borderRadius:8, cursor:"pointer",
-                      border: sel ? "1.5px solid #6366f1" : "1.5px solid #e2e8f0",
-                      background: sel ? "#ede9fe" : "#fff" }}>
+                      border: sel ? "1.5px solid #E28743" : "1.5px solid #e2e8f0",
+                      background: sel ? "#FEF3E2" : "#fff" }}>
                     <div style={{ width:14, height:14, borderRadius:"50%", border:"2px solid",
-                      borderColor: sel ? "#6366f1" : "#cbd5e1",
-                      background: sel ? "#6366f1" : "transparent",
+                      borderColor: sel ? "#E28743" : "#cbd5e1",
+                      background: sel ? "#E28743" : "transparent",
                       flexShrink:0 }} />
                     <div style={{ flex:1 }}>
-                      <span style={{ fontSize:13, fontWeight:700, color: sel ? "#4f46e5" : "#0f172a" }}>
+                      <span style={{ fontSize:13, fontWeight:700, color: sel ? "#C47535" : "#2C302E" }}>
                         {label} · {hora}
                       </span>
                       <span style={{ fontSize:11, color:"#94a3b8", marginLeft:8 }}>
                         {_CAL_TIPO_LABEL[a.tipo] ?? a.tipo}
                       </span>
                     </div>
-                    {sel && <span style={{ fontSize:11, color:"#6366f1", fontWeight:700 }}>✓</span>}
+                    {sel && <span style={{ fontSize:11, color:"#E28743", fontWeight:700 }}>✓</span>}
                   </div>
                 );
               })}
@@ -2599,7 +3407,14 @@ const TelaImportar = ({ paciente, isMobile = false, terapeutaId, onSessaoSalva, 
         )}
       </div>
 
-      <div style={{ marginTop:16, display:"flex", gap:10 }}>
+      {erroIA && (
+        <div style={{ marginTop:16, padding:"10px 14px", background:"#fff1f2",
+          border:"1px solid #fecdd3", borderRadius:10, fontSize:12, color:"#dc2626" }}>
+          {erroIA}
+        </div>
+      )}
+
+      <div style={{ marginTop:12, display:"flex", gap:10 }}>
         <button onClick={() => { setFase("upload"); setExtraido(null); setErroIA(""); setAgendamentoVinculadoId(null); }}
           style={{ padding:"10px 20px", background:"#f1f5f9",
             color:"#475569", border:"none", borderRadius:8, fontSize:13,
@@ -2607,7 +3422,7 @@ const TelaImportar = ({ paciente, isMobile = false, terapeutaId, onSessaoSalva, 
           Refazer importação
         </button>
         <button onClick={handleSalvar} disabled={salvando}
-          style={{ padding:"10px 24px", background: salvando ? "#a5b4fc" : "#6366f1",
+          style={{ padding:"10px 24px", background: salvando ? "#F0C08A" : "#E28743",
             color:"#fff", border:"none", borderRadius:8, fontSize:13,
             fontWeight:700, cursor: salvando ? "default" : "pointer", flex:1 }}>
           {salvando ? "Salvando…" : "✓ Confirmar e salvar no histórico"}
@@ -2633,21 +3448,101 @@ const PerfilCampo = ({ label, children }) => (
   </div>
 );
 
+// ─── COMPONENTE: ENTRADA DO HISTÓRICO DE AUDITORIA ───────────────────────────
+const LABELS_CAMPO = {
+  resumo: 'Resumo', objetivo: 'Objetivo', tarefa: 'Tarefa',
+  status: 'Status', deleted_at: 'Arquivamento',
+  temas: 'Temas', distorcoes: 'Distorções', tecnicas: 'Técnicas',
+  emocoes: 'Emoções', alertas: 'Alertas', observacoes: 'Observações',
+  nome: 'Nome', queixa: 'Queixa', meta: 'Meta',
+};
+
+const ICONE_OPERACAO = { INSERT: '➕', UPDATE: '✏️', DELETE: '🗑️' };
+
+const camposAlterados = (ant, nov) => {
+  if (!ant || !nov) return [];
+  return Object.keys(nov).filter(
+    k => JSON.stringify(nov[k]) !== JSON.stringify(ant[k])
+  );
+};
+
+const EntradaAuditoria = ({ entrada }) => {
+  const campos = entrada.operacao === 'UPDATE'
+    ? camposAlterados(entrada.dados_anteriores, entrada.dados_novos)
+    : [];
+
+  return (
+    <div style={{ display: "flex", gap: 10, padding: "10px 16px",
+      borderBottom: "1px solid #f1f5f9", alignItems: "flex-start" }}>
+      <span style={{ fontSize: 15, flexShrink: 0, marginTop: 1 }}>
+        {ICONE_OPERACAO[entrada.operacao] ?? '•'}
+      </span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 6, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: "#2C302E" }}>
+            {entrada.tabelaLabel} · {entrada.operacaoLabel}
+          </span>
+          <span style={{ fontSize: 11, color: "#94a3b8" }}>
+            {entrada.criadoEmFormatado}
+          </span>
+        </div>
+        {campos.length > 0 && (
+          <div style={{ fontSize: 11, color: "#64748b", marginTop: 3 }}>
+            {campos.map((c, i) => (
+              <span key={c}>
+                {i > 0 && ", "}
+                {LABELS_CAMPO[c]
+                  ? <span>{LABELS_CAMPO[c]} atualizado</span>
+                  : <em>{c}</em>}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 // ─── TELA: PERFIL DO PACIENTE ─────────────────────────────────────────────────
 const TelaPerfil = ({ paciente, isMobile = false, onAtualizar, onExcluir, terapeutaId, terapeutaNome, terapeutaEmail }) => {
   const [editando, setEditando] = useState(false);
   const [salvando, setSalvando] = useState(false);
+  const [erroSalvar, setErroSalvar] = useState("");
   const [confirmandoExcluir, setConfirmandoExcluir] = useState(false);
-  const [excluirHistorico, setExcluirHistorico] = useState(true);
   const [excluindo, setExcluindo] = useState(false);
+  const [erroArquivar, setErroArquivar] = useState("");
 
   // App do paciente
   const [convites, setConvites] = useState([]);
   const [carregandoConvites, setCarregandoConvites] = useState(false);
   const [gerandoConvite, setGerandoConvite] = useState(false);
+  const [historicoAberto, setHistoricoAberto] = useState(false);
+  const [historicoEntradas, setHistoricoEntradas] = useState([]);
+  const [carregandoHistorico, setCarregandoHistorico] = useState(false);
+  const [historicoCarregado, setHistoricoCarregado] = useState(false);
   const [emailConvite, setEmailConvite] = useState(paciente.email || "");
   const [linkCopiado, setLinkCopiado] = useState(false);
   const [erroConvite, setErroConvite] = useState("");
+  const [exportandoJSON, setExportandoJSON] = useState(false);
+  const [exportandoCSV, setExportandoCSV] = useState(false);
+
+  const handleExportarJSON = async () => {
+    setExportandoJSON(true);
+    const [{ data: sessoesData }, { data: planosData }, { data: tarefasData }] = await Promise.all([
+      supabase.from('sessoes').select('*').eq('paciente_id', paciente.id).order('data', { ascending: false }),
+      supabase.from('planos').select('*').eq('paciente_id', paciente.id).order('criado_em', { ascending: false }),
+      supabase.from('tarefas').select('*').eq('paciente_id', paciente.id).order('criado_em', { ascending: false }),
+    ]);
+    exportarJSON(paciente, sessoesData ?? [], planosData ?? [], tarefasData ?? []);
+    setExportandoJSON(false);
+  };
+
+  const handleExportarCSV = async () => {
+    setExportandoCSV(true);
+    const { data: sessoesData } = await supabase.from('sessoes').select('*').eq('paciente_id', paciente.id).order('data', { ascending: false });
+    exportarCSV(paciente, sessoesData ?? []);
+    setExportandoCSV(false);
+  };
 
   useEffect(() => {
     if (!paciente?.id || typeof paciente.id !== "string") return;
@@ -2743,16 +3638,22 @@ ${nomeProf}`
     setEmailConvite(paciente.email || "");
     setConvites([]);
     setErroConvite("");
+    setHistoricoAberto(false);
+    setHistoricoEntradas([]);
+    setHistoricoCarregado(false);
   }, [paciente.id]);
 
   const campo = (key) => (e) => setForm(prev => ({ ...prev, [key]: e.target.value }));
 
   const salvar = async () => {
     setSalvando(true);
+    setErroSalvar("");
     try {
       const atualizado = { ...paciente, ...form, iniciais: form.iniciais || gerarIniciais(form.nome) };
       await onAtualizar?.(atualizado);
       setEditando(false);
+    } catch (err) {
+      setErroSalvar(err.message || "Erro ao salvar. Tente novamente.");
     } finally {
       setSalvando(false);
     }
@@ -2760,7 +3661,9 @@ ${nomeProf}`
 
   const excluir = async () => {
     setExcluindo(true);
-    try { await onExcluir?.(paciente.id, excluirHistorico); }
+    setErroArquivar("");
+    try { await onExcluir?.(paciente.id); }
+    catch (e) { setErroArquivar(e.message || "Erro ao arquivar paciente"); }
     finally { setExcluindo(false); }
   };
 
@@ -2768,7 +3671,7 @@ ${nomeProf}`
   const cor = corRisco[paciente.risco] || "#10b981";
 
   const inp = (ativo = true) => ({
-    width: "100%", padding: "9px 12px", fontSize: 13, color: "#0f172a",
+    width: "100%", padding: "9px 12px", fontSize: 13, color: "#2C302E",
     border: `1.5px solid ${editando && ativo ? "#e2e8f0" : "#f1f5f9"}`,
     borderRadius: 8, background: editando && ativo ? "#fff" : "#f8fafc",
     outline: "none", boxSizing: "border-box", fontFamily: "inherit",
@@ -2786,7 +3689,7 @@ ${nomeProf}`
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
           <Avatar iniciais={paciente.iniciais} cor={paciente.cor} tamanho={46} />
           <div>
-            <div style={{ fontSize: 20, fontWeight: 800, color: "#0f172a", lineHeight: 1.2 }}>
+            <div style={{ fontSize: 20, fontWeight: 800, color: "#2C302E", lineHeight: 1.2 }}>
               {editando ? (form.nome || paciente.nome) : paciente.nome}
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
@@ -2796,7 +3699,7 @@ ${nomeProf}`
                 {paciente.risco === "alto" ? "⚠️ " : ""}Risco {paciente.risco}
               </span>
               <span style={{ fontSize: 12, color: "#94a3b8" }}>{paciente.sessoes} sessões</span>
-              <span style={{ fontSize: 12, color: BANCO_PALAVRAS[paciente.linha]?.cor || "#6366f1",
+              <span style={{ fontSize: 12, color: BANCO_PALAVRAS[paciente.linha]?.cor || "#E28743",
                 fontWeight: 600 }}>
                 {BANCO_PALAVRAS[paciente.linha]?.label || "TCC"}
               </span>
@@ -2806,13 +3709,13 @@ ${nomeProf}`
         <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
           {editando ? (
             <>
-              <button onClick={() => { setEditando(false); setForm(inicialForm(paciente)); }}
+              <button onClick={() => { setEditando(false); setErroSalvar(""); setForm(inicialForm(paciente)); }}
                 style={{ padding: "7px 16px", background: "#f1f5f9", border: "none",
                   borderRadius: 8, fontSize: 12, fontWeight: 700, color: "#64748b", cursor: "pointer" }}>
                 Cancelar
               </button>
               <button onClick={salvar} disabled={salvando}
-                style={{ padding: "7px 16px", background: salvando ? "#a5b4fc" : "#6366f1",
+                style={{ padding: "7px 16px", background: salvando ? "#F0C08A" : "#E28743",
                   border: "none", borderRadius: 8, fontSize: 12, fontWeight: 700,
                   color: "#fff", cursor: salvando ? "default" : "pointer" }}>
                 {salvando ? "Salvando…" : "Salvar alterações"}
@@ -2820,12 +3723,18 @@ ${nomeProf}`
             </>
           ) : (
             <button onClick={() => setEditando(true)}
-              style={{ padding: "7px 16px", background: "#f0f0ff", border: "1.5px solid #e0e0ff",
-                borderRadius: 8, fontSize: 12, fontWeight: 700, color: "#4f46e5", cursor: "pointer" }}>
+              style={{ padding: "7px 16px", background: "#FEF3E2", border: "1.5px solid #F0D4B0",
+                borderRadius: 8, fontSize: 12, fontWeight: 700, color: "#C47535", cursor: "pointer" }}>
               ✎ Editar
             </button>
           )}
         </div>
+        {erroSalvar && (
+          <div style={{ marginTop: 8, padding: "8px 12px", background: "#fff1f2",
+            border: "1px solid #fecdd3", borderRadius: 8, fontSize: 12, color: "#dc2626" }}>
+            ⚠️ {erroSalvar}
+          </div>
+        )}
       </div>
 
       {/* Formulário */}
@@ -2918,7 +3827,7 @@ ${nomeProf}`
           { l: "Próxima sessão", v: paciente.proximaSessao || "Não agendada" },
         ].map(s => (
           <div key={s.l} style={{ textAlign: "center" }}>
-            <div style={{ fontSize: 18, fontWeight: 800, color: "#0f172a" }}>{s.v}</div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: "#2C302E" }}>{s.v}</div>
             <div style={{ fontSize: 11, color: "#94a3b8", fontWeight: 600, marginTop: 2 }}>{s.l}</div>
           </div>
         ))}
@@ -2952,13 +3861,13 @@ ${nomeProf}`
               </div>
               {conviteAtivo.status !== "usado" && (
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
-                  <div style={{ fontSize: 11, color: "#6d28d9", background: "#ede9fe",
-                    border: "1px solid #c4b5fd", borderRadius: 8, padding: "6px 10px",
+                  <div style={{ fontSize: 11, color: "#C47535", background: "#FEF3E2",
+                    border: "1px solid #F0D4B0", borderRadius: 8, padding: "6px 10px",
                     flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {gerarLinkConvite(conviteAtivo.token)}
                   </div>
                   <button onClick={() => copiarLink(conviteAtivo.token)}
-                    style={{ padding: "6px 14px", background: linkCopiado ? "#f0fdf4" : "#7c3aed",
+                    style={{ padding: "6px 14px", background: linkCopiado ? "#f0fdf4" : "#E28743",
                       color: linkCopiado ? "#166534" : "#fff", border: "none",
                       borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}>
                     {linkCopiado ? "✓ Copiado" : "Copiar link"}
@@ -2968,7 +3877,7 @@ ${nomeProf}`
               {conviteAtivo.status !== "usado" && conviteAtivo.email_paciente && (
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <button onClick={() => abrirEmailConvite(conviteAtivo.token)}
-                    style={{ padding: "7px 14px", background: "#7c3aed", color: "#fff",
+                    style={{ padding: "7px 14px", background: "#E28743", color: "#fff",
                       border: "none", borderRadius: 8, fontSize: 12, fontWeight: 700,
                       cursor: "pointer" }}>
                     📧 Enviar por e-mail
@@ -2989,7 +3898,7 @@ ${nomeProf}`
             </div>
           ) : (
             <div>
-              <div style={{ fontSize: 12, color: "#6d28d9", marginBottom: 12, lineHeight: 1.5 }}>
+              <div style={{ fontSize: 12, color: "#8A4020", marginBottom: 12, lineHeight: 1.5 }}>
                 Convide {paciente.nome.split(" ")[0]} para acompanhar o tratamento no app.
                 {!paciente.email && (
                   <span style={{ color: "#92400e" }}> Informe o e-mail abaixo ou cadastre-o no perfil.</span>
@@ -3003,12 +3912,12 @@ ${nomeProf}`
               )}
               {paciente.email ? (
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                  <div style={{ flex: 1, padding: "8px 12px", fontSize: 12, color: "#6d28d9",
-                    background: "#ede9fe", border: "1px solid #c4b5fd", borderRadius: 8 }}>
+                  <div style={{ flex: 1, padding: "8px 12px", fontSize: 12, color: "#C47535",
+                    background: "#FEF3E2", border: "1px solid #F0D4B0", borderRadius: 8 }}>
                     {paciente.email}
                   </div>
                   <button onClick={handleGerarConvite} disabled={gerandoConvite}
-                    style={{ padding: "8px 16px", background: gerandoConvite ? "#a5b4fc" : "#7c3aed",
+                    style={{ padding: "8px 16px", background: gerandoConvite ? "#F0C08A" : "#E28743",
                       color: "#fff", border: "none", borderRadius: 8, fontSize: 12,
                       fontWeight: 700, cursor: gerandoConvite ? "default" : "pointer", flexShrink: 0 }}>
                     {gerandoConvite ? "Gerando…" : "Gerar convite"}
@@ -3022,12 +3931,12 @@ ${nomeProf}`
                     onChange={e => setEmailConvite(e.target.value)}
                     placeholder="E-mail do paciente (obrigatório)"
                     style={{ flex: 1, minWidth: 160, padding: "8px 12px", fontSize: 12,
-                      border: `1.5px solid ${erroConvite ? "#fca5a5" : "#c4b5fd"}`,
+                      border: `1.5px solid ${erroConvite ? "#fca5a5" : "#F0D4B0"}`,
                       borderRadius: 8, outline: "none",
-                      fontFamily: "inherit", color: "#0f172a" }}
+                      fontFamily: "inherit", color: "#2C302E" }}
                   />
                   <button onClick={handleGerarConvite} disabled={gerandoConvite}
-                    style={{ padding: "8px 16px", background: gerandoConvite ? "#a5b4fc" : "#7c3aed",
+                    style={{ padding: "8px 16px", background: gerandoConvite ? "#F0C08A" : "#E28743",
                       color: "#fff", border: "none", borderRadius: 8, fontSize: 12,
                       fontWeight: 700, cursor: gerandoConvite ? "default" : "pointer", flexShrink: 0 }}>
                     {gerandoConvite ? "Gerando…" : "Gerar convite"}
@@ -3044,6 +3953,93 @@ ${nomeProf}`
         </div>
       )}
 
+      {/* Histórico de alterações */}
+      {!editando && (
+        <div style={{ marginBottom: 20 }}>
+          <button
+            onClick={async () => {
+              const abrindo = !historicoAberto;
+              setHistoricoAberto(abrindo);
+              if (abrindo && !historicoCarregado) {
+                setCarregandoHistorico(true);
+                const { data } = await buscarAuditLogPaciente(paciente.id, 10);
+                setHistoricoEntradas((data ?? []).map(formatarEntradaLog));
+                setHistoricoCarregado(true);
+                setCarregandoHistorico(false);
+              }
+            }}
+            style={{ width: "100%", display: "flex", alignItems: "center",
+              justifyContent: "space-between", padding: "10px 14px",
+              background: "#f8fafc", border: "1px solid #e2e8f0",
+              borderRadius: historicoAberto ? "10px 10px 0 0" : 10,
+              cursor: "pointer", textAlign: "left" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: "#2C302E" }}>
+                Histórico de alterações
+              </span>
+              {historicoCarregado && (
+                <span style={{ fontSize: 11, fontWeight: 700, padding: "1px 8px",
+                  borderRadius: 10, background: "#e0e7ff", color: "#4338ca" }}>
+                  {historicoEntradas.length}
+                </span>
+              )}
+            </div>
+            <span style={{ fontSize: 11, color: "#94a3b8",
+              transform: historicoAberto ? "rotate(180deg)" : "rotate(0deg)",
+              transition: "transform 0.2s", display: "inline-block" }}>▾</span>
+          </button>
+
+          {historicoAberto && (
+            <div style={{ border: "1px solid #e2e8f0", borderTop: "none",
+              borderRadius: "0 0 10px 10px", overflow: "hidden" }}>
+              {carregandoHistorico ? (
+                <div style={{ padding: "14px 16px", fontSize: 12, color: "#94a3b8" }}>
+                  Carregando…
+                </div>
+              ) : historicoEntradas.length === 0 ? (
+                <div style={{ padding: "14px 16px", fontSize: 12, color: "#94a3b8" }}>
+                  Nenhuma alteração registrada ainda.
+                </div>
+              ) : historicoEntradas.map(entrada => (
+                <EntradaAuditoria key={entrada.id} entrada={entrada} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Exportar dados */}
+      {!editando && (
+        <div style={{ border: "1px solid #e2e8f0", borderRadius: 12,
+          padding: "16px 20px", background: "#fff", marginBottom: 20 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b",
+            textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>
+            Exportar dados
+          </div>
+          <div style={{ fontSize: 12, color: "#64748b", marginBottom: 14 }}>
+            Exportação completa dos dados clínicos para portabilidade (LGPD Art. 18)
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              onClick={handleExportarJSON}
+              disabled={exportandoJSON}
+              style={{ padding: "8px 16px", background: "#f8fafc", border: "1.5px solid #e2e8f0",
+                borderRadius: 8, fontSize: 12, fontWeight: 700, color: "#0f172a",
+                cursor: exportandoJSON ? "default" : "pointer", opacity: exportandoJSON ? 0.6 : 1 }}>
+              {exportandoJSON ? "Exportando…" : "⬇ Exportar JSON"}
+            </button>
+            <button
+              onClick={handleExportarCSV}
+              disabled={exportandoCSV}
+              style={{ padding: "8px 16px", background: "#f8fafc", border: "1.5px solid #e2e8f0",
+                borderRadius: 8, fontSize: 12, fontWeight: 700, color: "#0f172a",
+                cursor: exportandoCSV ? "default" : "pointer", opacity: exportandoCSV ? 0.6 : 1 }}>
+              {exportandoCSV ? "Exportando…" : "⬇ Exportar CSV"}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Zona de perigo */}
       {!editando && (
         <div style={{ border: "1.5px solid #fecdd3", borderRadius: 12,
@@ -3057,42 +4053,38 @@ ${nomeProf}`
             <div style={{ display: "flex", alignItems: "center",
               justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
               <div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: "#0f172a", marginBottom: 2 }}>
-                  Excluir paciente
+                <div style={{ fontSize: 13, fontWeight: 600, color: "#2C302E", marginBottom: 2 }}>
+                  Arquivar paciente
                 </div>
                 <div style={{ fontSize: 12, color: "#64748b" }}>
-                  Remove o cadastro e opcionalmente todo o histórico de sessões.
+                  Preserva o cadastro e histórico. Pode ser restaurado em até 30 dias.
                 </div>
               </div>
               <button onClick={() => setConfirmandoExcluir(true)}
                 style={{ padding: "8px 18px", background: "#fff1f2",
                   border: "1.5px solid #fecdd3", borderRadius: 8, fontSize: 12,
                   fontWeight: 700, color: "#dc2626", cursor: "pointer", flexShrink: 0 }}>
-                Excluir paciente
+                Arquivar paciente
               </button>
             </div>
           ) : (
             <div>
               <div style={{ fontSize: 14, fontWeight: 700, color: "#dc2626", marginBottom: 6 }}>
-                ⚠️ Excluir {paciente.nome}?
+                Arquivar {paciente.nome}?
               </div>
-              <div style={{ fontSize: 13, color: "#64748b", marginBottom: 14, lineHeight: 1.5 }}>
-                Esta ação não pode ser desfeita. O cadastro será removido permanentemente.
+              <div style={{ fontSize: 13, color: "#64748b", marginBottom: 16, lineHeight: 1.5 }}>
+                O cadastro e histórico serão preservados e poderão ser restaurados em até 30 dias.
+                Após esse prazo, os dados são excluídos permanentemente.
               </div>
-              <label style={{ display: "flex", alignItems: "center", gap: 10,
-                marginBottom: 16, cursor: "pointer" }}>
-                <input type="checkbox" checked={excluirHistorico}
-                  onChange={e => setExcluirHistorico(e.target.checked)}
-                  style={{ width: 16, height: 16, accentColor: "#dc2626", cursor: "pointer" }} />
-                <span style={{ fontSize: 13, color: "#0f172a", fontWeight: 500 }}>
-                  Excluir também o histórico de sessões&nbsp;
-                  <span style={{ color: "#94a3b8" }}>
-                    ({paciente.sessoes} {paciente.sessoes === 1 ? "sessão" : "sessões"})
-                  </span>
-                </span>
-              </label>
+              {erroArquivar && (
+                <div style={{ fontSize: 12, color: "#dc2626", background: "#fff1f2",
+                  border: "1px solid #fecdd3", borderRadius: 8,
+                  padding: "8px 12px", marginBottom: 12 }}>
+                  {erroArquivar}
+                </div>
+              )}
               <div style={{ display: "flex", gap: 10 }}>
-                <button onClick={() => setConfirmandoExcluir(false)}
+                <button onClick={() => { setConfirmandoExcluir(false); setErroArquivar(""); }}
                   style={{ padding: "8px 18px", background: "#f1f5f9", border: "none",
                     borderRadius: 8, fontSize: 12, fontWeight: 700, color: "#64748b", cursor: "pointer" }}>
                   Cancelar
@@ -3101,7 +4093,7 @@ ${nomeProf}`
                   style={{ padding: "8px 22px", background: excluindo ? "#fca5a5" : "#dc2626",
                     border: "none", borderRadius: 8, fontSize: 12, fontWeight: 700,
                     color: "#fff", cursor: excluindo ? "default" : "pointer" }}>
-                  {excluindo ? "Excluindo…" : "Sim, excluir permanentemente"}
+                  {excluindo ? "Arquivando…" : "Arquivar paciente"}
                 </button>
               </div>
             </div>
@@ -3189,7 +4181,7 @@ const TelaMural = ({ paciente }) => {
   });
 
   return (
-    <div style={{ height: "100%", display: "flex", overflow: "hidden" }}>
+    <div style={{ height: "100%", display: "flex", overflow: "hidden", background: "rgba(241,167,166,0.05)" }}>
 
       {/* ── Coluna esquerda ── */}
       <div style={{ flex: 1, overflowY: "auto", padding: "24px 28px", borderRight: "1px solid #f1f5f9" }}>
@@ -3198,7 +4190,7 @@ const TelaMural = ({ paciente }) => {
         <div style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>
           Mural de palavras-chave
         </div>
-        <div style={{ fontSize: 20, fontWeight: 800, color: "#0f172a", marginBottom: 20 }}>
+        <div style={{ fontSize: 20, fontWeight: 800, color: "#2C302E", marginBottom: 20 }}>
           {paciente.nome.split(" ")[0]}
         </div>
 
@@ -3232,7 +4224,7 @@ const TelaMural = ({ paciente }) => {
             placeholder="Buscar palavra…"
             style={{
               width: "100%", padding: "8px 12px", border: "1.5px solid #e2e8f0",
-              borderRadius: 10, fontSize: 13, color: "#0f172a", background: "#f8fafc",
+              borderRadius: 10, fontSize: 13, color: "#2C302E", background: "#f8fafc",
               outline: "none", boxSizing: "border-box",
             }}
           />
@@ -3326,7 +4318,7 @@ const TelaMural = ({ paciente }) => {
             placeholder="Adicionar palavra personalizada…"
             style={{
               flex: 1, padding: "8px 12px", border: "1.5px solid #e2e8f0",
-              borderRadius: 10, fontSize: 13, color: "#0f172a", background: "#f8fafc",
+              borderRadius: 10, fontSize: 13, color: "#2C302E", background: "#f8fafc",
               outline: "none",
             }}
           />
@@ -3342,7 +4334,7 @@ const TelaMural = ({ paciente }) => {
       </div>
 
       {/* ── Coluna direita ── */}
-      <div style={{ width: 300, flexShrink: 0, overflowY: "auto", padding: "24px 20px", background: "#fafafa" }}>
+      <div style={{ width: 300, flexShrink: 0, overflowY: "auto", padding: "24px 20px", background: "rgba(241,167,166,0.08)", borderLeft: "1px solid rgba(241,167,166,0.2)" }}>
 
         {/* Contador */}
         <div style={{ marginBottom: 16, textAlign: "center" }}>
@@ -3457,7 +4449,7 @@ const TelaInsights = ({ paciente, analise }) => {
   if (!analise) return (
     <div style={{ padding:"48px 28px", textAlign:"center", color:"#94a3b8" }}>
       <div style={{ fontSize:32, marginBottom:12 }}>📊</div>
-      <div style={{ fontSize:15, fontWeight:700, color:"#0f172a", marginBottom:6 }}>Dados insuficientes</div>
+      <div style={{ fontSize:15, fontWeight:700, color:"#2C302E", marginBottom:6 }}>Dados insuficientes</div>
       <div style={{ fontSize:13 }}>São necessárias pelo menos 2 sessões registradas para gerar insights.</div>
     </div>
   );
@@ -3510,7 +4502,7 @@ const TelaInsights = ({ paciente, analise }) => {
         <div>
           <div style={{ fontSize:11, fontWeight:700, color:"#94a3b8", textTransform:"uppercase",
             letterSpacing:"0.08em", marginBottom:4 }}>Análise longitudinal</div>
-          <div style={{ fontSize:20, fontWeight:800, color:"#0f172a" }}>
+          <div style={{ fontSize:20, fontWeight:800, color:"#2C302E" }}>
             Insights — {paciente.nome.split(" ")[0]}
           </div>
           <div style={{ fontSize:13, color:"#64748b", marginTop:2 }}>
@@ -3518,7 +4510,7 @@ const TelaInsights = ({ paciente, analise }) => {
           </div>
         </div>
         <button onClick={exportarRelatorio}
-          style={{ padding:"8px 18px", background:"#0f172a", color:"#fff", border:"none",
+          style={{ padding:"8px 18px", background:"#2C302E", color:"#fff", border:"none",
             borderRadius:8, fontSize:13, fontWeight:700, cursor:"pointer" }}>
           Exportar relatório
         </button>
@@ -3527,14 +4519,14 @@ const TelaInsights = ({ paciente, analise }) => {
       {/* ── Seção 2: Cards de métricas ── */}
       <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12, marginBottom:20 }}>
         {[
-          { label:"Total de sessões", val: totalSessoes, sub:"registradas", cor:"#6366f1" },
+          { label:"Total de sessões", val: totalSessoes, sub:"registradas", cor:"#E28743" },
           { label:"Tarefas completas", val: `${pctCompletas}%`, sub:`${tarefasConcluidas} de ${totalComTarefa}`, cor:"#10b981" },
           { label:"Distorção principal", val: topDistorcoes[0]?.nome ?? "—", sub: topDistorcoes[0] ? `${topDistorcoes[0].percentual}% das sessões` : "dados insuficientes", cor:"#f59e0b" },
           { label:"Última sessão c/ alerta", val: ultimaSessaoAlerta ? `Sessão ${ultimaSessaoAlerta.numero}` : "Nenhuma", sub: ultimaSessaoAlerta ? ultimaSessaoAlerta.data : "sem alertas recentes", cor:"#ef4444" },
         ].map(({ label, val, sub, cor }) => (
           <div key={label} style={{ background:"#fff", borderRadius:12, padding:"14px 16px",
             border:"1px solid #f1f5f9", borderTop:`3px solid ${cor}` }}>
-            <div style={{ fontSize:15, fontWeight:800, color:"#0f172a", marginBottom:2, lineHeight:1.3 }}>{val}</div>
+            <div style={{ fontSize:15, fontWeight:800, color:"#2C302E", marginBottom:2, lineHeight:1.3 }}>{val}</div>
             <div style={{ fontSize:10, fontWeight:700, color:"#94a3b8", textTransform:"uppercase",
               letterSpacing:"0.05em", marginBottom:2 }}>{label}</div>
             <div style={{ fontSize:11, color:"#cbd5e1" }}>{sub}</div>
@@ -3652,15 +4644,15 @@ const AgendaHojeList = ({ agendamentos, pacientes, onSelect, onNovoAgendamento }
         style={{ display:"flex", alignItems:"center", gap:8, padding:"7px 14px",
           cursor: p ? "pointer" : "default", borderBottom:"1px solid #f8fafc",
           transition:"background 0.1s" }}
-        onMouseEnter={e => e.currentTarget.style.background = "#f5f3ff"}
+        onMouseEnter={e => e.currentTarget.style.background = "#FEF3E2"}
         onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
         <Avatar iniciais={p?.iniciais ?? "?"} cor={p?.cor ?? "#94a3b8"} tamanho={26} />
         <div style={{ flex:1, minWidth:0 }}>
-          <div style={{ fontSize:12, fontWeight:700, color:"#0f172a",
+          <div style={{ fontSize:12, fontWeight:700, color:"#2C302E",
             overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
             {p?.nome ?? a.paciente_nome ?? "Sem paciente"}
           </div>
-          <div style={{ fontSize:10, color:"#6366f1", fontWeight:600 }}>
+          <div style={{ fontSize:10, color:"#E28743", fontWeight:600 }}>
             {hora} · {_CAL_TIPO_LABEL?.[a.tipo] ?? a.tipo}
           </div>
         </div>
@@ -3677,7 +4669,7 @@ const AgendaHojeList = ({ agendamentos, pacientes, onSelect, onNovoAgendamento }
         </div>
         {onNovoAgendamento && (
           <button onClick={() => onNovoAgendamento(null)}
-            style={{ padding:"6px 14px", background:"#6366f1", color:"#fff",
+            style={{ padding:"6px 14px", background:"#E28743", color:"#fff",
               border:"none", borderRadius:8, fontSize:11, fontWeight:700, cursor:"pointer" }}>
             + Novo agendamento
           </button>
@@ -3822,7 +4814,7 @@ const ModalAgendamento = ({ paciente, pacientes = [], terapeutaId, onSalvar, onF
       onClick={e => e.target === e.currentTarget && onFechar()}>
       <div style={{ background:"#fff", borderRadius:16, padding:"28px 28px 24px",
         width:460, boxShadow:"0 20px 60px rgba(0,0,0,0.18)" }}>
-        <div style={{ fontSize:16, fontWeight:800, color:"#0f172a", marginBottom:16 }}>
+        <div style={{ fontSize:16, fontWeight:800, color:"#2C302E", marginBottom:16 }}>
           {modoEdicao ? "✏️ Editar agendamento" : "📅 Agendar sessão"}
         </div>
 
@@ -3834,13 +4826,13 @@ const ModalAgendamento = ({ paciente, pacientes = [], terapeutaId, onSalvar, onF
                 letterSpacing:"0.06em", marginBottom:5 }}>Paciente</div>
               {paciente ? (
                 <div style={{ padding:"8px 12px", background:"#f8fafc", border:"1.5px solid #f1f5f9",
-                  borderRadius:8, fontSize:13, color:"#0f172a", fontWeight:600 }}>
+                  borderRadius:8, fontSize:13, color:"#2C302E", fontWeight:600 }}>
                   {paciente.nome}
                 </div>
               ) : (
                 <select value={pacienteIdSel} onChange={e => { setPacienteIdSel(e.target.value); setErroModal(null); }}
                   style={{ width:"100%", padding:"8px 12px", border:`1.5px solid ${erroModal ? "#ef4444" : "#e2e8f0"}`,
-                    borderRadius:8, fontSize:13, color:"#0f172a", outline:"none",
+                    borderRadius:8, fontSize:13, color:"#2C302E", outline:"none",
                     background:"#fff", boxSizing:"border-box" }}>
                   <option value="">— Sem paciente vinculado —</option>
                   {pacientes.map(p => (
@@ -3864,14 +4856,14 @@ const ModalAgendamento = ({ paciente, pacientes = [], terapeutaId, onSalvar, onF
               letterSpacing:"0.06em", marginBottom:5 }}>Data *</div>
             <input type="date" value={data} onChange={e => setData(e.target.value)}
               style={{ width:"100%", padding:"8px 12px", border:"1.5px solid #e2e8f0",
-                borderRadius:8, fontSize:13, color:"#0f172a", outline:"none", boxSizing:"border-box" }} />
+                borderRadius:8, fontSize:13, color:"#2C302E", outline:"none", boxSizing:"border-box" }} />
           </div>
           <div>
             <div style={{ fontSize:11, fontWeight:700, color:"#64748b", textTransform:"uppercase",
               letterSpacing:"0.06em", marginBottom:5 }}>Hora início *</div>
             <input type="time" value={horaInicio} onChange={e => setHoraInicio(e.target.value)}
               style={{ width:"100%", padding:"8px 12px", border:"1.5px solid #e2e8f0",
-                borderRadius:8, fontSize:13, color:"#0f172a", outline:"none", boxSizing:"border-box" }} />
+                borderRadius:8, fontSize:13, color:"#2C302E", outline:"none", boxSizing:"border-box" }} />
           </div>
         </div>
 
@@ -3881,7 +4873,7 @@ const ModalAgendamento = ({ paciente, pacientes = [], terapeutaId, onSalvar, onF
               letterSpacing:"0.06em", marginBottom:5 }}>Duração</div>
             <select value={duracao} onChange={e => setDuracao(e.target.value)}
               style={{ width:"100%", padding:"8px 12px", border:"1.5px solid #e2e8f0",
-                borderRadius:8, fontSize:13, color:"#0f172a", outline:"none",
+                borderRadius:8, fontSize:13, color:"#2C302E", outline:"none",
                 background:"#fff", boxSizing:"border-box" }}>
               <option value={30}>30 min</option>
               <option value={45}>45 min</option>
@@ -3905,7 +4897,7 @@ const ModalAgendamento = ({ paciente, pacientes = [], terapeutaId, onSalvar, onF
             letterSpacing:"0.06em", marginBottom:5 }}>Tipo</div>
           <select value={tipo} onChange={e => setTipo(e.target.value)}
             style={{ width:"100%", padding:"8px 12px", border:"1.5px solid #e2e8f0",
-              borderRadius:8, fontSize:13, color:"#0f172a", outline:"none",
+              borderRadius:8, fontSize:13, color:"#2C302E", outline:"none",
               background:"#fff", boxSizing:"border-box" }}>
             <option value="sessao">Sessão</option>
             <option value="avaliacao">Avaliação</option>
@@ -3922,7 +4914,7 @@ const ModalAgendamento = ({ paciente, pacientes = [], terapeutaId, onSalvar, onF
                   letterSpacing:"0.06em", marginBottom:5 }}>Recorrência</div>
                 <select value={recorrencia} onChange={e => setRecorrencia(e.target.value)}
                   style={{ width:"100%", padding:"8px 12px", border:"1.5px solid #e2e8f0",
-                    borderRadius:8, fontSize:13, color:"#0f172a", outline:"none",
+                    borderRadius:8, fontSize:13, color:"#2C302E", outline:"none",
                     background:"#fff", boxSizing:"border-box" }}>
                   <option value="nenhuma">Pontual</option>
                   <option value="semanal">Semanal</option>
@@ -3936,7 +4928,7 @@ const ModalAgendamento = ({ paciente, pacientes = [], terapeutaId, onSalvar, onF
                     letterSpacing:"0.06em", marginBottom:5 }}>Repetições</div>
                   <select value={repeticoes} onChange={e => setRepeticoes(Number(e.target.value))}
                     style={{ width:"100%", padding:"8px 12px", border:"1.5px solid #e2e8f0",
-                      borderRadius:8, fontSize:13, color:"#0f172a", outline:"none",
+                      borderRadius:8, fontSize:13, color:"#2C302E", outline:"none",
                       background:"#fff", boxSizing:"border-box" }}>
                     <option value={4}>4×</option>
                     <option value={8}>8×</option>
@@ -3962,7 +4954,7 @@ const ModalAgendamento = ({ paciente, pacientes = [], terapeutaId, onSalvar, onF
             placeholder="Ex: Primeira sessão de avaliação inicial"
             rows={2}
             style={{ width:"100%", padding:"8px 12px", border:"1.5px solid #e2e8f0",
-              borderRadius:8, fontSize:13, color:"#0f172a", outline:"none",
+              borderRadius:8, fontSize:13, color:"#2C302E", outline:"none",
               resize:"vertical", boxSizing:"border-box", fontFamily:"inherit" }} />
         </div>
 
@@ -3973,7 +4965,7 @@ const ModalAgendamento = ({ paciente, pacientes = [], terapeutaId, onSalvar, onF
             Cancelar
           </button>
           <button onClick={salvar} disabled={salvando}
-            style={{ padding:"9px 24px", background:"#6366f1", color:"#fff",
+            style={{ padding:"9px 24px", background:"#E28743", color:"#fff",
               border:"none", borderRadius:8, fontSize:13, fontWeight:700, cursor:"pointer",
               opacity: salvando ? 0.6 : 1 }}>
             {salvando ? "Salvando…" : modoEdicao ? "Salvar alterações" : recorrencia !== "nenhuma" ? `Agendar ${offsets.length} sessões` : "Agendar"}
@@ -4119,7 +5111,7 @@ const TelaCalendario = ({ agendamentos, setAgendamentos, pacientes, terapeutaId,
             background:"#fff", cursor:"pointer", fontSize:16, color:"#64748b" }}>‹</button>
 
         {/* Label central */}
-        <div style={{ flex:1, textAlign:"center", fontSize:13, fontWeight:700, color:"#0f172a" }}>
+        <div style={{ flex:1, textAlign:"center", fontSize:13, fontWeight:700, color:"#2C302E" }}>
           {modoVista === "semana"
             ? labelSemana()
             : diaAtual.toLocaleDateString("pt-BR", { weekday:"long", day:"numeric", month:"long", year:"numeric" })}
@@ -4129,8 +5121,8 @@ const TelaCalendario = ({ agendamentos, setAgendamentos, pacientes, terapeutaId,
         <button onClick={() => { setSemanaOffset(0); setDiaSel(hojeRef.getDay() === 0 ? 6 : hojeRef.getDay() - 1); }}
           style={{ padding:"5px 12px", border:"1.5px solid #e2e8f0", borderRadius:8, cursor:"pointer",
             fontSize:12, fontWeight:700,
-            background: semanaOffset === 0 && (modoVista === "semana" || mesmoDia(diaAtual, hojeRef)) ? "#ede9fe" : "#fff",
-            color: semanaOffset === 0 && (modoVista === "semana" || mesmoDia(diaAtual, hojeRef)) ? "#4f46e5" : "#64748b" }}>
+            background: semanaOffset === 0 && (modoVista === "semana" || mesmoDia(diaAtual, hojeRef)) ? "#FEF3E2" : "#fff",
+            color: semanaOffset === 0 && (modoVista === "semana" || mesmoDia(diaAtual, hojeRef)) ? "#C47535" : "#64748b" }}>
           Hoje
         </button>
 
@@ -4144,7 +5136,7 @@ const TelaCalendario = ({ agendamentos, setAgendamentos, pacientes, terapeutaId,
           {["semana","dia"].map(v => (
             <button key={v} onClick={() => setModoVista(v)}
               style={{ padding:"5px 12px", border:"none", cursor:"pointer", fontSize:11, fontWeight:700,
-                background: modoVista === v ? "#6366f1" : "#fff",
+                background: modoVista === v ? "#E28743" : "#fff",
                 color: modoVista === v ? "#fff" : "#64748b" }}>
               {v === "semana" ? "Semana" : "Dia"}
             </button>
@@ -4169,17 +5161,17 @@ const TelaCalendario = ({ agendamentos, setAgendamentos, pacientes, terapeutaId,
                 style={{ flex:1, padding:"8px 4px", textAlign:"center",
                   borderLeft:"1px solid #f1f5f9",
                   cursor: modoVista === "semana" ? "pointer" : "default",
-                  background: isSel ? "#f5f3ff" : "transparent" }}>
+                  background: isSel ? "#FEF3E2" : "transparent" }}>
                 <div style={{ fontSize:10, fontWeight:700,
-                  color: isSel ? "#6366f1" : "#94a3b8",
+                  color: isSel ? "#E28743" : "#94a3b8",
                   textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:3 }}>
                   {_CAL_NOMES[nomIdx]}
                 </div>
                 <div style={{ width:28, height:28, borderRadius:"50%",
                   display:"inline-flex", alignItems:"center", justifyContent:"center",
                   fontSize:13, fontWeight:800,
-                  background: isHoje ? "#6366f1" : isSel ? "#ede9fe" : "transparent",
-                  color: isHoje ? "#fff" : isSel ? "#4f46e5" : "#0f172a" }}>
+                  background: isHoje ? "#E28743" : isSel ? "#FEF3E2" : "transparent",
+                  color: isHoje ? "#fff" : isSel ? "#C47535" : "#2C302E" }}>
                   {dia.getDate()}
                 </div>
               </div>
@@ -4222,13 +5214,13 @@ const TelaCalendario = ({ agendamentos, setAgendamentos, pacientes, terapeutaId,
                       data: new Date(dia),
                       horaInicio: `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`,
                     })}
-                    onDragOver={e => { e.preventDefault(); e.currentTarget.style.background = "#ede9fe"; }}
+                    onDragOver={e => { e.preventDefault(); e.currentTarget.style.background = "#FEF3E2"; }}
                     onDragLeave={e => { e.currentTarget.style.background = "transparent"; }}
                     onDrop={e => { e.currentTarget.style.background = "transparent"; handleDrop(e, dia, h, m); }}
                     style={{ position:"absolute", top: si * _CAL_SLOT_H,
                       left:0, right:0, height:_CAL_SLOT_H, cursor:"pointer",
                       borderBottom:`1px solid ${m === 0 ? "#f1f5f9" : "#f8fafc"}` }}
-                    onMouseEnter={e => { if (!draggingId) e.currentTarget.style.background = "#f5f3ff"; }}
+                    onMouseEnter={e => { if (!draggingId) e.currentTarget.style.background = "#FEF3E2"; }}
                     onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
                   />
                 ))}
@@ -4246,22 +5238,22 @@ const TelaCalendario = ({ agendamentos, setAgendamentos, pacientes, terapeutaId,
                       onClick={e => { e.stopPropagation(); setAgendSel(a); }}
                       style={{ position:"absolute", top: top + 1, left:2, right:2,
                         height: height - 2,
-                        background: estilo ? estilo.bg : "#ede9fe",
-                        border: `1.5px solid ${estilo ? estilo.border : "#a5b4fc"}`,
-                        borderLeft: `3px solid ${estilo ? estilo.borderLeft : "#6366f1"}`,
+                        background: estilo ? estilo.bg : "#FEF3E2",
+                        border: `1.5px solid ${estilo ? estilo.border : "#F0D4B0"}`,
+                        borderLeft: `3px solid ${estilo ? estilo.borderLeft : "#E28743"}`,
                         borderRadius:6, padding:"3px 6px", overflow:"hidden",
                         cursor: bloqueado ? "default" : "grab",
                         opacity: draggingId === a.id ? 0.4 : bloqueado ? 0.7 : 1,
                         zIndex:2 }}>
                       <div style={{ fontSize:10, fontWeight:700,
-                        color: estilo ? estilo.cor : "#4f46e5",
+                        color: estilo ? estilo.cor : "#C47535",
                         whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
                         {estilo?.prefixo}
                         {a.paciente_iniciais && <span style={{ opacity:0.7 }}>{a.paciente_iniciais} · </span>}
                         {a.paciente_nome || "Agendamento"}
                       </div>
                       {height > _CAL_SLOT_H && (
-                        <div style={{ fontSize:9, color: estilo ? estilo.cor : "#6366f1", opacity:0.7, marginTop:1 }}>
+                        <div style={{ fontSize:9, color: estilo ? estilo.cor : "#E28743", opacity:0.7, marginTop:1 }}>
                           {new Date(a.inicio).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})}
                           –{new Date(a.fim).toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"})}
                         </div>
@@ -4287,16 +5279,16 @@ const TelaCalendario = ({ agendamentos, setAgendamentos, pacientes, terapeutaId,
             onClick={e => e.stopPropagation()}>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:8 }}>
               <div>
-                <div style={{ fontSize:15, fontWeight:800, color:"#0f172a" }}>
+                <div style={{ fontSize:15, fontWeight:800, color:"#2C302E" }}>
                   {agendSel.paciente_nome || "Agendamento"}
                 </div>
-                <div style={{ fontSize:11, color:"#6366f1", fontWeight:600, marginTop:2 }}>
+                <div style={{ fontSize:11, color:"#E28743", fontWeight:600, marginTop:2 }}>
                   {_CAL_TIPO_LABEL[agendSel.tipo] ?? agendSel.tipo}
                 </div>
               </div>
               <span style={{ fontSize:11, fontWeight:700, padding:"2px 8px", borderRadius:10,
-                background: agendSel.status === "cancelado" ? "#fff1f2" : agendSel.status === "realizado" ? "#f0fdf4" : "#ede9fe",
-                color: agendSel.status === "cancelado" ? "#dc2626" : agendSel.status === "realizado" ? "#16a34a" : "#4f46e5" }}>
+                background: agendSel.status === "cancelado" ? "#fff1f2" : agendSel.status === "realizado" ? "#f0fdf4" : "#FEF3E2",
+                color: agendSel.status === "cancelado" ? "#dc2626" : agendSel.status === "realizado" ? "#16a34a" : "#C47535" }}>
                 {agendSel.status === "realizado" ? "✓ realizado" : agendSel.status}
               </span>
             </div>
@@ -4322,7 +5314,7 @@ const TelaCalendario = ({ agendamentos, setAgendamentos, pacientes, terapeutaId,
                     if (p && onIrParaCopiloto) onIrParaCopiloto(p);
                     setAgendSel(null);
                   }}
-                  style={{ flex:1, padding:"7px 0", background:"#6366f1", color:"#fff",
+                  style={{ flex:1, padding:"7px 0", background:"#E28743", color:"#fff",
                     border:"none", borderRadius:8, fontSize:12, fontWeight:700, cursor:"pointer" }}>
                   Abrir copiloto
                 </button>
@@ -4390,25 +5382,691 @@ const TelaCalendario = ({ agendamentos, setAgendamentos, pacientes, terapeutaId,
   );
 };
 
+// ─── TELA: CONFIGURAÇÕES DO TERAPEUTA ────────────────────────────────────────
+// ─── TELA: DASHBOARD ──────────────────────────────────────────────────────────
+const TelaDashboard = ({ pacientesLista = [], agendamentos = [], terapeutaId, terapeutaNome }) => {
+  const [metricas, setMetricas] = useState(null);
+  const [carregando, setCarregando] = useState(true);
+
+  useEffect(() => {
+    const agora = new Date();
+    const trintaDiasAtras = new Date(agora.getTime() - 30 * 24 * 3600 * 1000);
+    const seteDiasAtras = new Date(agora.getTime() - 7 * 24 * 3600 * 1000);
+    const inicioDia = new Date(agora); inicioDia.setHours(0, 0, 0, 0);
+    const fimDia = new Date(agora); fimDia.setHours(23, 59, 59, 999);
+    const diaSemana = agora.getDay();
+    const inicioSemana = new Date(agora); inicioSemana.setDate(agora.getDate() - diaSemana); inicioSemana.setHours(0, 0, 0, 0);
+    const fimSemana = new Date(inicioSemana); fimSemana.setDate(inicioSemana.getDate() + 6); fimSemana.setHours(23, 59, 59, 999);
+
+    const agendHoje = agendamentos.filter(a => {
+      if (a.status === 'cancelado') return false;
+      const d = new Date(a.inicio);
+      return d >= inicioDia && d <= fimDia;
+    });
+    const agendSemana = agendamentos.filter(a => {
+      if (a.status === 'cancelado') return false;
+      const d = new Date(a.inicio);
+      return d >= inicioSemana && d <= fimSemana;
+    });
+
+    if (!hasSupabase || !terapeutaId || terapeutaId === "demo") {
+      const n = pacientesLista.length;
+      setMetricas({
+        totalPacientes: n,
+        pacientesAtivos: Math.min(n, 2),
+        agendamentosHoje: agendHoje.length,
+        agendamentosSemana: agendSemana.length,
+        pacientesUsandoApp: Math.min(n, 1),
+        statusPlanos: { a_iniciar: Math.max(0, n - 2), proposto: Math.min(n, 1), confirmado: Math.min(n, 1) },
+        pacientesPorStatus: pacientesLista.map((p, i) => ({ ...p, statusPlano: i === 0 ? 'confirmado' : i === 1 ? 'proposto' : 'a_iniciar' })),
+      });
+      setCarregando(false);
+      return;
+    }
+
+    const pIds = pacientesLista.map(p => p.id).filter(id => typeof id === "string");
+
+    Promise.all([
+      supabase.from("sessoes").select("paciente_id")
+        .eq("terapeuta_id", terapeutaId)
+        .gte("created_at", trintaDiasAtras.toISOString()),
+      pIds.length > 0
+        ? supabase.from("registros_abcd").select("paciente_id").in("paciente_id", pIds).gte("created_at", seteDiasAtras.toISOString())
+        : Promise.resolve({ data: [] }),
+      supabase.from("planos").select("paciente_id, status, created_at")
+        .eq("terapeuta_id", terapeutaId)
+        .order("created_at", { ascending: false }),
+    ]).then(([{ data: sessoesData }, { data: registrosData }, { data: planosData }]) => {
+      const activePIds = new Set((sessoesData || []).map(s => s.paciente_id));
+      const pacientesAtivos = pIds.filter(id => activePIds.has(id)).length;
+
+      const appUserPIds = new Set((registrosData || []).map(r => r.paciente_id));
+      const pacientesUsandoApp = pIds.filter(id => appUserPIds.has(id)).length;
+
+      const latestPlanoPerPaciente = {};
+      (planosData || []).forEach(p => {
+        if (!latestPlanoPerPaciente[p.paciente_id]) {
+          latestPlanoPerPaciente[p.paciente_id] = p.status || 'proposto';
+        }
+      });
+
+      const statusCounts = { a_iniciar: 0, proposto: 0, confirmado: 0 };
+      const pacientesPorStatus = pacientesLista.map(p => {
+        const st = latestPlanoPerPaciente[p.id] || 'a_iniciar';
+        statusCounts[st] = (statusCounts[st] || 0) + 1;
+        return { ...p, statusPlano: st };
+      });
+
+      setMetricas({
+        totalPacientes: pacientesLista.length,
+        pacientesAtivos,
+        agendamentosHoje: agendHoje.length,
+        agendamentosSemana: agendSemana.length,
+        pacientesUsandoApp,
+        statusPlanos: statusCounts,
+        pacientesPorStatus,
+      });
+      setCarregando(false);
+    });
+  }, [terapeutaId, pacientesLista.length, agendamentos.length]);
+
+  const saudacao = () => {
+    const h = new Date().getHours();
+    if (h < 12) return "Bom dia";
+    if (h < 18) return "Boa tarde";
+    return "Boa noite";
+  };
+
+  if (carregando) {
+    return (
+      <div style={{ padding:"40px 28px", display:"flex", alignItems:"center", justifyContent:"center", height:"100%" }}>
+        <div style={{ fontSize:13, color:"#94a3b8" }}>Carregando métricas…</div>
+      </div>
+    );
+  }
+
+  if (!metricas) return null;
+
+  const { totalPacientes, pacientesAtivos, agendamentosHoje, agendamentosSemana, pacientesUsandoApp, statusPlanos, pacientesPorStatus } = metricas;
+  const nomeExibido = terapeutaNome ? terapeutaNome.split(" ")[0] : "";
+  const pendentes = (statusPlanos.a_iniciar || 0) + (statusPlanos.proposto || 0);
+
+  return (
+    <div style={{ padding:"32px 28px", overflowY:"auto", height:"100%", boxSizing:"border-box" }}>
+      {/* Header */}
+      <div style={{ marginBottom:28 }}>
+        <div style={{ fontSize:22, fontWeight:800, color:"#2C302E", marginBottom:4 }}>
+          {saudacao()}{nomeExibido ? `, ${nomeExibido}` : ""}
+        </div>
+        <div style={{ fontSize:13, color:"#64748b" }}>
+          Aqui está um resumo do seu consultório hoje
+        </div>
+      </div>
+
+      {/* Cards: Pacientes + Agenda */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(4, 1fr)", gap:16, marginBottom:20 }}>
+        <div style={{ background:"#fff", border:"1px solid #f1f5f9", borderRadius:12, padding:"18px 20px" }}>
+          <div style={{ fontSize:11, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:10 }}>Pacientes</div>
+          <div style={{ display:"flex", alignItems:"baseline", gap:8 }}>
+            <div style={{ fontSize:32, fontWeight:800, color:"#2C302E", lineHeight:1 }}>{totalPacientes}</div>
+            <div style={{ fontSize:12, color:"#94a3b8" }}>cadastrados</div>
+          </div>
+        </div>
+        <div style={{ background:"#fff", border:"1px solid #f1f5f9", borderRadius:12, padding:"18px 20px" }}>
+          <div style={{ fontSize:11, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:10 }}>Ativos (30d)</div>
+          <div style={{ display:"flex", alignItems:"baseline", gap:8 }}>
+            <div style={{ fontSize:32, fontWeight:800, color:"#E28743", lineHeight:1 }}>{pacientesAtivos}</div>
+            <div style={{ fontSize:12, color:"#94a3b8" }}>
+              {totalPacientes > 0 ? `${Math.round(pacientesAtivos / totalPacientes * 100)}%` : "—"}
+            </div>
+          </div>
+        </div>
+        <div style={{ background: agendamentosHoje > 0 ? "#f0f9ff" : "#fff", border:`1px solid ${agendamentosHoje > 0 ? "#bae6fd" : "#f1f5f9"}`, borderRadius:12, padding:"18px 20px" }}>
+          <div style={{ fontSize:11, fontWeight:700, color: agendamentosHoje > 0 ? "#0369a1" : "#94a3b8", textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:10 }}>Hoje</div>
+          <div style={{ display:"flex", alignItems:"baseline", gap:8 }}>
+            <div style={{ fontSize:32, fontWeight:800, color: agendamentosHoje > 0 ? "#0ea5e9" : "#2C302E", lineHeight:1 }}>{agendamentosHoje}</div>
+            <div style={{ fontSize:12, color:"#94a3b8" }}>sessões</div>
+          </div>
+        </div>
+        <div style={{ background:"#fff", border:"1px solid #f1f5f9", borderRadius:12, padding:"18px 20px" }}>
+          <div style={{ fontSize:11, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:10 }}>Esta semana</div>
+          <div style={{ display:"flex", alignItems:"baseline", gap:8 }}>
+            <div style={{ fontSize:32, fontWeight:800, color:"#2C302E", lineHeight:1 }}>{agendamentosSemana}</div>
+            <div style={{ fontSize:12, color:"#94a3b8" }}>sessões</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Cards: App + Planos */}
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 2fr", gap:16, marginBottom:20 }}>
+        <div style={{ background:"#fff", border:"1px solid #f1f5f9", borderRadius:12, padding:"18px 20px" }}>
+          <div style={{ fontSize:11, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:10 }}>App ativo (7d)</div>
+          <div style={{ display:"flex", alignItems:"baseline", gap:8, marginBottom:6 }}>
+            <div style={{ fontSize:32, fontWeight:800, color:"#8b5cf6", lineHeight:1 }}>{pacientesUsandoApp}</div>
+            <div style={{ fontSize:12, color:"#94a3b8" }}>pacientes</div>
+          </div>
+          <div style={{ fontSize:11, color:"#94a3b8", lineHeight:1.4 }}>
+            {pacientesUsandoApp > 0 ? "Registros recentes no app do paciente" : "Nenhum registro recente no app"}
+          </div>
+        </div>
+
+        <div style={{ background:"#fff", border:"1px solid #f1f5f9", borderRadius:12, padding:"18px 20px" }}>
+          <div style={{ fontSize:11, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:16 }}>Status dos planos de sessão</div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:16 }}>
+            <div style={{ textAlign:"center" }}>
+              <div style={{ fontSize:28, fontWeight:800, color:"#94a3b8", lineHeight:1, marginBottom:4 }}>{statusPlanos.a_iniciar || 0}</div>
+              <div style={{ fontSize:11, fontWeight:700, color:"#64748b", marginBottom:2 }}>A iniciar</div>
+              <div style={{ fontSize:10, color:"#94a3b8", lineHeight:1.4 }}>Plano não gerado</div>
+            </div>
+            <div style={{ textAlign:"center" }}>
+              <div style={{ fontSize:28, fontWeight:800, color:"#f59e0b", lineHeight:1, marginBottom:4 }}>{statusPlanos.proposto || 0}</div>
+              <div style={{ fontSize:11, fontWeight:700, color:"#92400e", marginBottom:2 }}>Proposto</div>
+              <div style={{ fontSize:10, color:"#94a3b8", lineHeight:1.4 }}>Aguardando revisão</div>
+            </div>
+            <div style={{ textAlign:"center" }}>
+              <div style={{ fontSize:28, fontWeight:800, color:"#10b981", lineHeight:1, marginBottom:4 }}>{statusPlanos.confirmado || 0}</div>
+              <div style={{ fontSize:11, fontWeight:700, color:"#065f46", marginBottom:2 }}>Confirmado</div>
+              <div style={{ fontSize:10, color:"#94a3b8", lineHeight:1.4 }}>Revisado e aprovado</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Lista de pacientes com plano pendente */}
+      {pendentes > 0 && pacientesPorStatus.length > 0 && (
+        <div style={{ background:"#fff", border:"1px solid #f1f5f9", borderRadius:12, padding:"18px 20px" }}>
+          <div style={{ fontSize:12, fontWeight:700, color:"#2C302E", marginBottom:14 }}>
+            Próxima sessão — Pendências de plano
+          </div>
+          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+            {pacientesPorStatus.filter(p => p.statusPlano !== 'confirmado').map(p => (
+              <div key={p.id} style={{ display:"flex", alignItems:"center", gap:12,
+                padding:"10px 12px", borderRadius:8, background:"#f8fafc" }}>
+                <Avatar iniciais={p.iniciais} cor={p.cor} tamanho={32} />
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontSize:13, fontWeight:600, color:"#2C302E" }}>{p.nome}</div>
+                  <div style={{ fontSize:11, color:"#94a3b8", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{p.queixa || "—"}</div>
+                </div>
+                <div style={{
+                  padding:"3px 10px", borderRadius:20, fontSize:11, fontWeight:700, flexShrink:0,
+                  ...(p.statusPlano === 'proposto'
+                    ? { background:"#fffbeb", color:"#92400e", border:"1px solid #fde68a" }
+                    : { background:"#f1f5f9", color:"#475569", border:"1px solid #e2e8f0" })
+                }}>
+                  {p.statusPlano === 'proposto' ? 'Aguardando revisão' : 'Plano não gerado'}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ─── TELA ORIENTAÇÕES DE USO ──────────────────────────────────────────────────
+const ORIENTACOES_BLOCOS = [
+  {
+    id: "primeiros",
+    titulo: "🚀 Primeiros passos",
+    itens: [
+      { sub: "Configure seu perfil", txt: "Vá em ⚙️ Configurações no menu lateral, selecione o tratamento (Dr. ou Dra.), e preencha seu nome completo, e-mail, telefone e número de registro (CRP). Seu nome e tratamento aparecem no cabeçalho do menu lateral." },
+      { sub: "Cadastre seu primeiro paciente", txt: "Na seção Pacientes, clique em '+ Novo paciente'. Preencha nome, e-mail, queixa principal e selecione a linha terapêutica. Os dados podem ser editados a qualquer momento na aba Perfil do paciente." },
+      { sub: "Convide o paciente para o app", txt: "Acesse a aba Perfil do paciente → clique em 'Gerar link de convite' → copie e envie por WhatsApp ou e-mail. O paciente clica no link, cria uma senha e já fica vinculado ao seu cadastro." },
+    ],
+  },
+  {
+    id: "ciclo",
+    titulo: "🔄 Ciclo de uma sessão",
+    itens: [
+      { sub: "Antes da sessão", txt: "1. Acesse Visão Geral para checar a agenda do dia.\n2. Abra o paciente → Histórico → 📱 Registros do app para ver os registros da semana.\n3. Na aba 📋 Sessões, releia as sessões anteriores.\n4. Revise o plano proposto (aba Próx. Sessão) — edite se necessário e confirme." },
+      { sub: "Durante a sessão", txt: "Use a aba Mural para capturar palavras-chave em tempo real enquanto conversa com o paciente. Toque nas palavras para selecioná-las; o botão 'Organizar com IA' agrupa automaticamente por categoria." },
+      { sub: "Após a sessão (até 24h depois)", txt: "1. Vá em Importar → cole suas anotações em texto livre.\n2. Clique em 'Processar com IA' — ela extrai emoções, distorções e pontos-chave.\n3. Revise o que foi extraído.\n4. Salve a sessão.\n5. Gere o plano para a próxima sessão → revise → confirme.\n6. Envie a tarefa ao paciente pelo app." },
+    ],
+  },
+  {
+    id: "ia",
+    titulo: "🤖 Como a IA funciona",
+    itens: [
+      { sub: "O que ela faz", txt: "A IA lê suas anotações e extrai automaticamente: emoções com intensidade, distorções cognitivas identificadas, pontos-chave da sessão e sugestões de tarefa de casa. Ela também gera um plano estruturado para a próxima sessão com objetivos, técnicas sugeridas e perguntas iniciais." },
+      { sub: "O que ela NÃO faz", txt: "A IA não toma decisões clínicas. Ela é um rascunho inteligente — tudo que gerar deve ser revisado por você antes de ser confirmado. O julgamento clínico é sempre seu." },
+      { sub: "Aprendizado de estilo", txt: "Cada edição que você faz nos planos gerados ensina o sistema sobre seu estilo. Com o tempo, os rascunhos ficam mais alinhados à sua forma de trabalhar — menos edições, mais fluidez." },
+    ],
+  },
+  {
+    id: "mural",
+    titulo: "🏷️ Mural de palavras",
+    itens: [
+      { sub: "Para que serve", txt: "O Mural é um painel de captura rápida durante a sessão. Em vez de anotar em papel, você toca nas palavras clínicas relevantes para o momento — elas ficam registradas e organizadas automaticamente." },
+      { sub: "Banco de palavras", txt: "Cada linha terapêutica tem seu próprio banco: TCC tem cognição, comportamento e emoção; Psicanálise tem processo, estrutura e material; Gestalt tem contato e awareness, entre outras. O banco muda automaticamente conforme a linha configurada no perfil do paciente." },
+      { sub: "Organizar com IA", txt: "Após selecionar as palavras da sessão, clique em 'Organizar com IA'. O sistema agrupa por categoria e, para TCC, destaca as distorções identificadas em vermelho para fácil visualização." },
+    ],
+  },
+  {
+    id: "insights",
+    titulo: "📊 Insights e análise longitudinal",
+    itens: [
+      { sub: "Quando acessar", txt: "Use a aba Insights quinzenalmente ou antes de sessões de balanço. Ela mostra padrões que não são evidentes sessão a sessão." },
+      { sub: "Alertas automáticos", txt: "O sistema gera alertas quando detecta: baixa adesão a tarefas (2+ sessões sem realizar), distorção cognitiva em mais de 60% das sessões, ou alertas clínicos em duas sessões consecutivas." },
+      { sub: "Exportar relatório", txt: "O botão 'Exportar relatório' na aba Insights gera um resumo consolidado do paciente — útil para supervisão, interconsulta ou encaminhamento." },
+    ],
+  },
+  {
+    id: "agenda",
+    titulo: "📅 Agenda",
+    itens: [
+      { sub: "Hoje / Amanhã", txt: "Lista rápida das sessões do dia e do próximo dia com status do plano de cada paciente. Clique no nome do paciente para ir direto ao histórico." },
+      { sub: "Semana (Calendário)", txt: "Visualização semanal em grade. Clique em um horário vazio para criar agendamento. Clique em um existente para editar ou cancelar." },
+      { sub: "Boas práticas", txt: "Crie agendamentos com antecedência — eles alimentam os indicadores do Painel de Visão Geral. Sessões canceladas devem ser marcadas como canceladas (não apagadas) para manter o histórico correto." },
+    ],
+  },
+];
+
+const TelaOrientacoes = () => {
+  const [aberta, setAberta] = useState(null);
+  return (
+    <div style={{ height:"100%", overflowY:"auto", padding:"32px 40px", boxSizing:"border-box", background:"rgba(241,167,166,0.04)" }}>
+      <div style={{ maxWidth:720, margin:"0 auto" }}>
+        {/* Header */}
+        <div style={{ marginBottom:28 }}>
+          <div style={{ fontSize:22, fontWeight:800, color:"#2C302E", marginBottom:4 }}>
+            📋 Orientações de Uso
+          </div>
+          <div style={{ fontSize:13, color:"#64748b" }}>
+            Como usar cada funcionalidade da plataforma — abra a seção que precisar consultar.
+          </div>
+        </div>
+
+        {/* Fluxo rápido */}
+        <div style={{ background:"#FEF3E2", borderRadius:14, padding:"16px 20px", marginBottom:24, border:"1px solid #F0D4B0" }}>
+          <div style={{ fontSize:11, fontWeight:700, color:"#C47535", textTransform:"uppercase", letterSpacing:"0.07em", marginBottom:10 }}>
+            Fluxo de trabalho recomendado por sessão
+          </div>
+          {[
+            "Visão Geral → checar agenda e planos pendentes",
+            "Histórico do paciente → reler sessões anteriores",
+            "Mural (durante a sessão) → capturar palavras-chave",
+            "Importar → colar anotações e processar com IA",
+            "Próx. Sessão → revisar plano gerado → confirmar",
+            "Perfil do paciente → enviar tarefa ao app",
+          ].map((passo, i) => (
+            <div key={i} style={{ display:"flex", alignItems:"flex-start", gap:10, marginBottom:6 }}>
+              <div style={{ width:20, height:20, borderRadius:"50%", background:"#E28743", color:"#fff", fontSize:11, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, marginTop:1 }}>
+                {i + 1}
+              </div>
+              <span style={{ fontSize:13, color:"#8A4020", lineHeight:1.4 }}>{passo}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* Acordeão */}
+        <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+          {ORIENTACOES_BLOCOS.map(bloco => {
+            const estaAberto = aberta === bloco.id;
+            return (
+              <div key={bloco.id} style={{ background:"#fff", borderRadius:12, border:`1.5px solid ${estaAberto ? "#F0D4B0" : "#f1f5f9"}`, overflow:"hidden" }}>
+                <button
+                  onClick={() => setAberta(estaAberto ? null : bloco.id)}
+                  style={{ width:"100%", display:"flex", alignItems:"center", justifyContent:"space-between", padding:"14px 20px", background:"none", border:"none", cursor:"pointer", textAlign:"left" }}>
+                  <span style={{ fontSize:14, fontWeight:700, color:"#2C302E" }}>{bloco.titulo}</span>
+                  <span style={{ fontSize:20, color:"#94a3b8", transform: estaAberto ? "rotate(90deg)" : "none", transition:"transform 0.2s", lineHeight:1 }}>›</span>
+                </button>
+                {estaAberto && (
+                  <div style={{ padding:"0 20px 20px" }}>
+                    {bloco.itens.map((item, i) => (
+                      <div key={i} style={{ marginBottom: i < bloco.itens.length - 1 ? 16 : 0, paddingBottom: i < bloco.itens.length - 1 ? 16 : 0, borderBottom: i < bloco.itens.length - 1 ? "1px solid #f1f5f9" : "none" }}>
+                        <div style={{ fontSize:12, fontWeight:700, color:"#E28743", marginBottom:5 }}>
+                          {item.sub}
+                        </div>
+                        <div style={{ fontSize:13, color:"#475569", lineHeight:1.7, whiteSpace:"pre-line" }}>
+                          {item.txt}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Rodapé */}
+        <div style={{ marginTop:24, padding:"14px 18px", background:"#f8fafc", borderRadius:10, border:"1px dashed #e2e8f0", textAlign:"center" }}>
+          <div style={{ fontSize:12, color:"#94a3b8", lineHeight:1.6 }}>
+            Dúvidas não respondidas aqui? Consulte o arquivo <strong>GUIA_TERAPEUTA.md</strong> no repositório do projeto ou entre em contato com o suporte.
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const TelaConfiguracoes = ({ terapeutaId, terapeutaEmail, perfil, onSalvar }) => {
+  const [form, setForm] = useState({
+    tratamento:     perfil?.tratamento     ?? "Dr.",
+    nome:           perfil?.nome           ?? "",
+    telefone:       perfil?.telefone       ?? "",
+    crp:            perfil?.crp            ?? "",
+    janela_contexto: perfil?.janela_contexto ?? 3,
+  });
+  const [salvando, setSalvando] = useState(false);
+  const [sucesso, setSucesso] = useState(false);
+  const [erro, setErro] = useState("");
+
+  useEffect(() => {
+    setForm({
+      tratamento:     perfil?.tratamento     ?? "Dr.",
+      nome:           perfil?.nome           ?? "",
+      telefone:       perfil?.telefone       ?? "",
+      crp:            perfil?.crp            ?? "",
+      janela_contexto: perfil?.janela_contexto ?? 3,
+    });
+  }, [perfil?.nome, perfil?.telefone, perfil?.crp, perfil?.tratamento, perfil?.janela_contexto]);
+
+  const campo = (label, key, placeholder, tipo = "text", readOnly = false) => (
+    <div style={{ marginBottom: 16 }}>
+      <label style={{ display:"block", fontSize:11, fontWeight:700, color:"#94a3b8",
+        textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:6 }}>
+        {label}
+      </label>
+      <input
+        type={tipo}
+        value={readOnly ? (terapeutaEmail ?? "") : form[key]}
+        readOnly={readOnly}
+        onChange={readOnly ? undefined : e => setForm(f => ({ ...f, [key]: e.target.value }))}
+        placeholder={placeholder}
+        style={{ width:"100%", padding:"9px 12px", border:"1.5px solid #e2e8f0",
+          borderRadius:8, fontSize:13, color: readOnly ? "#94a3b8" : "#2C302E",
+          background: readOnly ? "#f8fafc" : "#fff", outline:"none",
+          boxSizing:"border-box" }}
+      />
+      {readOnly && (
+        <div style={{ fontSize:11, color:"#94a3b8", marginTop:4 }}>
+          Altere o e-mail em Supabase → Authentication → Users.
+        </div>
+      )}
+    </div>
+  );
+
+  const handleSalvar = async () => {
+    if (!form.nome.trim()) { setErro("Nome é obrigatório."); return; }
+    setSalvando(true); setSucesso(false); setErro("");
+    const { error } = await atualizarTerapeuta(terapeutaId, {
+      tratamento:      form.tratamento,
+      nome:            form.nome.trim(),
+      telefone:        form.telefone.trim() || null,
+      crp:             form.crp.trim()      || null,
+      janela_contexto: form.janela_contexto,
+    });
+    setSalvando(false);
+    if (error) {
+      setErro(error.message || "Erro ao salvar. Tente novamente.");
+    } else {
+      setSucesso(true);
+      onSalvar?.({ ...form });
+      setTimeout(() => setSucesso(false), 3000);
+    }
+  };
+
+  return (
+    <div style={{ height:"100%", overflowY:"auto" }}>
+      <div style={{ maxWidth:560, margin:"0 auto", padding:"32px 28px" }}>
+        {/* Header */}
+        <div style={{ marginBottom:28 }}>
+          <div style={{ fontSize:22, fontWeight:800, color:"#2C302E", marginBottom:4 }}>
+            ⚙️ Configurações
+          </div>
+          <div style={{ fontSize:13, color:"#64748b" }}>
+            Dados do seu perfil profissional
+          </div>
+        </div>
+
+        {/* Card perfil */}
+        <div style={{ background:"#fff", borderRadius:16, border:"1px solid #f1f5f9",
+          padding:"24px 28px", marginBottom:20 }}>
+          <div style={{ fontSize:12, fontWeight:700, color:"#E28743", textTransform:"uppercase",
+            letterSpacing:"0.07em", marginBottom:20 }}>
+            Dados pessoais e profissionais
+          </div>
+
+          {/* Seletor Dr. / Dra. */}
+          <div style={{ marginBottom:16 }}>
+            <label style={{ display:"block", fontSize:11, fontWeight:700, color:"#94a3b8",
+              textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:8 }}>
+              Tratamento
+            </label>
+            <div style={{ display:"flex", gap:8 }}>
+              {["Dr.", "Dra."].map(t => (
+                <button key={t} onClick={() => setForm(f => ({ ...f, tratamento: t }))}
+                  type="button"
+                  style={{ padding:"8px 22px", border:"1.5px solid",
+                    borderColor: form.tratamento === t ? "#E28743" : "#e2e8f0",
+                    borderRadius:8, fontSize:13, fontWeight:700, cursor:"pointer",
+                    background: form.tratamento === t ? "#FEF3E2" : "#fff",
+                    color: form.tratamento === t ? "#E28743" : "#64748b",
+                    transition:"all 0.15s" }}>
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {campo("Nome completo", "nome", "Ex: Ana Paula Silva")}
+          {campo("E-mail", null, "", "email", true)}
+          {campo("Telefone / WhatsApp", "telefone", "Ex: (11) 9 9999-9999")}
+          {campo("CRP / Registro de classe", "crp", "Ex: CRP 06/123456")}
+
+          {/* Janela de contexto da IA */}
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display:"block", fontSize:11, fontWeight:700, color:"#94a3b8",
+              textTransform:"uppercase", letterSpacing:"0.05em", marginBottom:6 }}>
+              Sessões usadas pela IA no plano
+            </label>
+            <div style={{ display:"flex", gap:8 }}>
+              {[3, 4, 5].map(n => (
+                <button key={n} type="button"
+                  onClick={() => setForm(f => ({ ...f, janela_contexto: n }))}
+                  style={{ padding:"6px 18px", borderRadius:8, border:"1.5px solid",
+                    borderColor: form.janela_contexto === n ? "#6366f1" : "#e2e8f0",
+                    background: form.janela_contexto === n ? "#eef2ff" : "#fff",
+                    color: form.janela_contexto === n ? "#6366f1" : "#64748b",
+                    fontWeight:600, fontSize:14, cursor:"pointer", fontFamily:"inherit" }}>
+                  {n}
+                </button>
+              ))}
+            </div>
+            <p style={{ fontSize:11, color:"#94a3b8", marginTop:6, marginBottom:0 }}>
+              Quantas sessões anteriores a IA analisa para gerar o plano. Mais sessões = análise mais longitudinal.
+            </p>
+          </div>
+        </div>
+
+        {/* Feedback */}
+        {erro && (
+          <div style={{ padding:"10px 14px", background:"#fff1f2", border:"1px solid #fecdd3",
+            borderRadius:8, fontSize:13, color:"#dc2626", marginBottom:16 }}>
+            ⚠️ {erro}
+          </div>
+        )}
+        {sucesso && (
+          <div style={{ padding:"10px 14px", background:"#f0fdf4", border:"1px solid #bbf7d0",
+            borderRadius:8, fontSize:13, color:"#15803d", marginBottom:16 }}>
+            ✅ Dados salvos com sucesso!
+          </div>
+        )}
+
+        <button
+          onClick={handleSalvar}
+          disabled={salvando}
+          style={{ padding:"10px 28px", background: salvando ? "#F0C08A" : "#E28743",
+            color:"#fff", border:"none", borderRadius:10, fontSize:14, fontWeight:700,
+            cursor: salvando ? "default" : "pointer" }}>
+          {salvando ? "Salvando…" : "Salvar alterações"}
+        </button>
+      </div>
+    </div>
+  );
+};
+
 // ─── APP PRINCIPAL ──────────────────────────────────────────────────────────────
+// ─── ONBOARDING ───────────────────────────────────────────────────────────────
+const ONBOARDING_STEPS = [
+  {
+    icone: null,
+    titulo: "Bem-vindo ao Vinculi",
+    texto: "Seu copiloto clínico está pronto.",
+    subtexto: "Registre sessões, gere planos com IA e acompanhe seus pacientes — tudo em um lugar.",
+  },
+  {
+    icone: "👤",
+    titulo: "Adicione seu primeiro paciente",
+    texto: "Comece criando um paciente",
+    subtexto: "No menu lateral esquerdo, clique em '+ Novo paciente' para cadastrar nome, queixa e linha terapêutica.",
+  },
+  {
+    icone: "📋",
+    titulo: "Importe uma sessão",
+    texto: "Cole suas anotações e a IA estrutura tudo",
+    subtexto: "Selecione um paciente → aba Importar → cole o texto da sessão → clique em 'Gerar rascunho com IA'.",
+  },
+  {
+    icone: "🎯",
+    titulo: "Plano gerado em segundos",
+    texto: "A IA sugere o plano para a próxima sessão",
+    subtexto: "Após importar, vá à aba Próx. sessão → 'Gerar plano com IA'. Revise, edite e confirme antes de usar.",
+  },
+  {
+    icone: "📱",
+    titulo: "Convide seu paciente",
+    texto: "Conecte o paciente ao app",
+    subtexto: "Aba Perfil do paciente → 'Gerar link de convite' → envie por WhatsApp ou e-mail. O paciente registra humor e tarefas entre sessões.",
+  },
+];
+
+const OnboardingModal = ({ step, onNext, onPrev, onConcluir, onPular }) => {
+  const atual = ONBOARDING_STEPS[step - 1];
+  const total = ONBOARDING_STEPS.length;
+  const isUltimo = step === total;
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 9999,
+      background: "rgba(15,23,42,0.45)",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      padding: 16,
+    }}>
+      <div style={{
+        background: "#fff", borderRadius: 20, padding: 36,
+        width: "100%", maxWidth: 480,
+        boxShadow: "0 24px 64px rgba(15,23,42,0.18)",
+        position: "relative",
+        display: "flex", flexDirection: "column", gap: 24,
+      }}>
+        {/* Pular */}
+        <button onClick={onPular} style={{
+          position: "absolute", top: 18, right: 20,
+          background: "none", border: "none", cursor: "pointer",
+          fontSize: 12, color: "#94a3b8", fontWeight: 600,
+          fontFamily: "inherit", padding: "4px 8px",
+        }}>
+          Pular
+        </button>
+
+        {/* Ícone */}
+        <div style={{ display: "flex", justifyContent: "center", paddingTop: 8 }}>
+          {atual.icone === null ? (
+            <VinculiIcon size={64} />
+          ) : (
+            <div style={{
+              width: 72, height: 72, borderRadius: "50%",
+              background: "#FDF0EF",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: 32,
+            }}>
+              {atual.icone}
+            </div>
+          )}
+        </div>
+
+        {/* Textos */}
+        <div style={{ textAlign: "center" }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#E28743", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>
+            {atual.titulo}
+          </div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: "#2C302E", lineHeight: 1.3, marginBottom: 12 }}>
+            {atual.texto}
+          </div>
+          <div style={{ fontSize: 14, color: "#64748b", lineHeight: 1.6 }}>
+            {atual.subtexto}
+          </div>
+        </div>
+
+        {/* Progress dots */}
+        <div style={{ display: "flex", justifyContent: "center", gap: 8 }}>
+          {Array.from({ length: total }, (_, i) => (
+            <div key={i} style={{
+              width: i + 1 === step ? 20 : 8, height: 8,
+              borderRadius: 4,
+              background: i + 1 === step ? "#E28743" : "#e2e8f0",
+              transition: "width 0.25s, background 0.25s",
+            }} />
+          ))}
+        </div>
+
+        {/* Navegação */}
+        <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+          {step > 1 && (
+            <button onClick={onPrev} style={{
+              padding: "10px 20px", borderRadius: 10,
+              border: "1.5px solid #e2e8f0", background: "#fff",
+              fontSize: 13, fontWeight: 600, color: "#475569",
+              cursor: "pointer", fontFamily: "inherit",
+            }}>
+              Anterior
+            </button>
+          )}
+          <button onClick={isUltimo ? onConcluir : onNext} style={{
+            padding: "10px 28px", borderRadius: 10,
+            border: "none", background: "#E28743",
+            fontSize: 13, fontWeight: 700, color: "#fff",
+            cursor: "pointer", fontFamily: "inherit",
+          }}>
+            {isUltimo ? "Concluir ✓" : "Próximo →"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export default function App() {
   const bp = useBreakpoint();
   const isMobile = bp === "mobile";
   const isCompact = bp === "mobile" || bp === "tablet";
-  const [pacientesLista, setPacientesLista] = useState(PACIENTES);
-  const [paciente, setPaciente] = useState(PACIENTES[0]);
+  const [pacientesLista, setPacientesLista] = useState(hasSupabase ? [] : PACIENTES);
+  const [humorAlerta, setHumorAlerta] = useState(new Map());
+  const [paciente, setPaciente] = useState(hasSupabase ? null : PACIENTES[0]);
   const [aba, setAba] = useState("historico");
+  const [abaParaNavegar, setAbaParaNavegar] = useState(null);
   const [menuAberto, setMenuAberto] = useState(true);
   const [mostrarPacientes, setMostrarPacientes] = useState(false);
+  const [triggerAbrirPaciente, setTriggerAbrirPaciente] = useState(false);
+  const [menuMobileAberto, setMenuMobileAberto] = useState(false);
   const [sessaoAuth, setSessaoAuth] = useState(null);
   const [carregandoAuth, setCarregandoAuth] = useState(true);
   const [terapeutaNome, setTerapeutaNome] = useState("");
-  const [secaoAtiva, setSecaoAtiva] = useState("agenda");   // "agenda" | "pacientes" | null
-  const [abaAgenda, setAbaAgenda] = useState("hoje");        // "hoje" | "calendario"
+  const [terapeutaPerfil, setTerapeutaPerfil] = useState(null); // { nome, telefone, crp }
+  const [mostrarDashboard, setMostrarDashboard] = useState(true);
+  const [mostrarAgenda, setMostrarAgenda] = useState(false);
+  const [mostrarConfiguracoes, setMostrarConfiguracoes] = useState(false);
+  const [mostrarOrientacoes, setMostrarOrientacoes] = useState(false);
+  const [secaoAtiva, setSecaoAtiva] = useState("visaogeral"); // "visaogeral" | "agenda" | "pacientes" | "configuracoes" | "orientacoes" | null
+  const [abaAgenda, setAbaAgenda] = useState("hoje");         // "hoje" | "calendario"
   const [agendamentos, setAgendamentos] = useState([]);
   const [modalAgendamentoAberto, setModalAgendamentoAberto] = useState(false);
   const [pacienteParaAgendar, setPacienteParaAgendar] = useState(null);
   const agendRangeRef = useRef({ inicio: null, fim: null }); // rastreia range já carregado
+  const [onboardingVisivel, setOnboardingVisivel] = useState(false);
+  const [onboardingStep, setOnboardingStep] = useState(1);
 
   const mapearPaciente = (p, idx) => ({
     ...p,
@@ -4425,40 +6083,71 @@ export default function App() {
 
   useEffect(() => {
     if (hasSupabase) testarConexao();
-    if (import.meta.env.VITE_GEMINI_API_KEY) testarChavesIA();
+    testarChavesIA();
+    const prevUid = { current: null };
     const { data } = onAuthStateChange(async (evento, sessao) => {
       setSessaoAuth(sessao);
       setCarregandoAuth(false);
+      // BUG 1: resetar state ao trocar de usuário (evita dados de sessão anterior)
+      const novoUid = sessao?.user?.id ?? null;
+      if (novoUid !== prevUid.current) {
+        prevUid.current = novoUid;
+        if (novoUid && novoUid !== "demo") {
+          setPacientesLista([]);
+          setPaciente(null);
+          setAgendamentos([]);
+          setHumorAlerta(new Map());
+          setTerapeutaNome("");
+          setTerapeutaPerfil(null);
+          setOnboardingVisivel(false);
+          agendRangeRef.current = { inicio: null, fim: null };
+        }
+      }
       if (sessao?.user?.id && sessao.user.id !== "demo") {
-        // Garante que existe uma linha em terapeutas (caso o trigger não tenha disparado no cadastro)
-        if (hasSupabase) {
-          await supabase.from("terapeutas").upsert(
-            { id: sessao.user.id, email: sessao.user.email },
-            { onConflict: "id", ignoreDuplicates: true }
-          );
-          const { data: perfil } = await supabase
-            .from("terapeutas").select("nome").eq("id", sessao.user.id).maybeSingle();
-          if (perfil?.nome) setTerapeutaNome(perfil.nome);
-        }
-        const { data: lista } = await listarPacientes(sessao.user.id);
-        if (lista && lista.length > 0) {
-          const mapeados = lista.map(mapearPaciente);
-          setPacientesLista(mapeados);
-          setPaciente(mapeados[0]);
-        }
-        // lista vazia → mantém PACIENTES demo já no estado inicial
-
-        // Carrega agendamentos: 1 mês atrás até 3 meses à frente
-        const hoje = new Date();
-        const rIni = new Date(hoje); rIni.setMonth(hoje.getMonth() - 1); rIni.setHours(0,0,0,0);
-        const rFim = new Date(hoje); rFim.setMonth(hoje.getMonth() + 3); rFim.setHours(23,59,59,999);
-        listarAgendamentos(sessao.user.id, rIni.toISOString(), rFim.toISOString())
-          .then(({ data }) => {
-            if (data) {
-              setAgendamentos(data);
-              agendRangeRef.current = { inicio: rIni, fim: rFim };
+        try {
+          // Garante que existe uma linha em terapeutas (caso o trigger não tenha disparado no cadastro)
+          if (hasSupabase) {
+            await supabase.from("terapeutas").upsert(
+              { id: sessao.user.id, email: sessao.user.email },
+              { onConflict: "id", ignoreDuplicates: true }
+            );
+            const { data: perfil } = await supabase
+              .from("terapeutas").select("nome, telefone, crp, tratamento, onboarding_concluido, janela_contexto").eq("id", sessao.user.id).maybeSingle();
+            if (perfil?.nome) setTerapeutaNome(perfil.nome);
+            if (perfil) setTerapeutaPerfil({ nome: perfil.nome ?? "", telefone: perfil.telefone ?? "", crp: perfil.crp ?? "", tratamento: perfil.tratamento ?? "Dr.", janela_contexto: perfil.janela_contexto ?? 3 });
+            // BUG 2: nome vazio → configurações antes do onboarding
+            if (perfil && !perfil.nome) {
+              setMostrarDashboard(false);
+              setMostrarConfiguracoes(true);
+              setSecaoAtiva("configuracoes");
+            } else if (perfil && !perfil.onboarding_concluido) {
+              setOnboardingStep(1);
+              setOnboardingVisivel(true);
             }
-          });
+          }
+          const { data: lista } = await listarPacientes(sessao.user.id);
+          const mapeados = (lista ?? []).map(mapearPaciente);
+          setPacientesLista(mapeados);
+          if (mapeados.length > 0) {
+            setPaciente(mapeados[0]);
+            buscarUltimoHumorPorPacientes(mapeados.map(p => p.id))
+              .then(mapa => setHumorAlerta(mapa));
+          }
+
+          // Carrega agendamentos: 1 mês atrás até 3 meses à frente
+          const hoje = new Date();
+          const rIni = new Date(hoje); rIni.setMonth(hoje.getMonth() - 1); rIni.setHours(0,0,0,0);
+          const rFim = new Date(hoje); rFim.setMonth(hoje.getMonth() + 3); rFim.setHours(23,59,59,999);
+          listarAgendamentos(sessao.user.id, rIni.toISOString(), rFim.toISOString())
+            .then(({ data }) => {
+              if (data) {
+                setAgendamentos(data);
+                agendRangeRef.current = { inicio: rIni, fim: rFim };
+              }
+            });
+        } catch (err) {
+          console.error('[auth] erro crítico no carregamento:', err);
+        }
       } else {
         // Modo mock: carrega agendamentos simulados (range amplo)
         const hoje = new Date();
@@ -4478,6 +6167,8 @@ export default function App() {
 
   // normaliza registro do Supabase para o formato de UI usado em sessoesList
   const mapearSessao = (s) => ({
+    id: s.id,
+    created_at: s.created_at,
     numero: s.numero,
     data: s.data,
     temas: s.temas || [],
@@ -4496,27 +6187,56 @@ export default function App() {
 
   // auto-carrega sessões do Supabase sempre que o paciente selecionado mudar
   useEffect(() => {
+    setAba("historico");
     const pid = paciente?.id;
     if (typeof pid !== "string") return; // mock (número) → skip
-    listarSessoes(pid).then(({ data }) => {
+    listarSessoes(pid).then(({ data, error }) => {
+      if (error) { console.error("[sessoes] erro ao carregar:", error); return; }
       if (!data || data.length === 0) return;
       const mapeadas = data.map(mapearSessao);
       setPaciente(prev => prev.id === pid ? { ...prev, sessoesList: mapeadas } : prev);
+      // Atualiza também a lista para que clicar no paciente não apague as sessões carregadas
+      setPacientesLista(prev => prev.map(pt => pt.id === pid ? { ...pt, sessoesList: mapeadas } : pt));
     });
   }, [paciente?.id]);
 
-  const handleSessaoSalva = (novaSessao) => {
+  useEffect(() => {
+    if (abaParaNavegar && paciente?.id) {
+      setAba(abaParaNavegar);
+      setAbaParaNavegar(null);
+    }
+  }, [paciente?.id, abaParaNavegar]);
+
+  useEffect(() => {
+    if (pacientesLista.length === 0) return;
+    buscarUltimoHumorPorPacientes(pacientesLista.map(p => p.id))
+      .then(mapa => setHumorAlerta(mapa));
+  }, [pacientesLista.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleSessaoSalva = async (novaSessao) => {
     const pid = paciente.id;
+    // Atualização local imediata para UX responsiva
     setPaciente(prev => ({
       ...prev,
       sessoes: prev.sessoes + 1,
-      sessoesList: [novaSessao, ...prev.sessoesList],
+      sessoesList: [novaSessao, ...(prev.sessoesList || [])],
     }));
     setPacientesLista(prev => prev.map(p => {
       if (p.id !== pid) return p;
       return { ...p, sessoes: (p.sessoes || 0) + 1, sessoesList: [novaSessao, ...(p.sessoesList || [])] };
     }));
     setAba("historico");
+    // Recarrega do banco para garantir que a lista está sincronizada
+    if (typeof pid === "string") {
+      const { data } = await listarSessoes(pid);
+      if (data && data.length > 0) {
+        const mapeadas = data.map(mapearSessao);
+        setPaciente(prev => prev.id === pid ? { ...prev, sessoesList: mapeadas } : prev);
+      }
+    }
+    // Re-fetch humor para atualizar badges (paciente pode ter registrado durante a sessão)
+    buscarUltimoHumorPorPacientes(pacientesLista.map(p => p.id))
+      .then(mapa => setHumorAlerta(mapa));
   };
 
   const handleNovoPaciente = (novo) => {
@@ -4528,7 +6248,7 @@ export default function App() {
     setPaciente(atualizado);
     const tid = sessaoAuth?.user?.id;
     if (typeof atualizado.id === "string" && tid && tid !== "demo") {
-      await atualizarPaciente(atualizado.id, {
+      const { error } = await atualizarPaciente(atualizado.id, {
         nome: atualizado.nome,
         iniciais: atualizado.iniciais,
         queixa: atualizado.queixa,
@@ -4538,31 +6258,59 @@ export default function App() {
         risco: atualizado.risco,
         inicio: atualizado.inicio,
         sessoes_pagas: Number(atualizado.sessoes_pagas) || 0,
+        email: atualizado.email || null,
+        telefone: atualizado.telefone || null,
+        convenio: atualizado.convenio || null,
+        idade: atualizado.idade ? Number(atualizado.idade) : null,
       });
+      if (error) throw new Error(error.message || "Erro ao salvar no banco");
     }
   };
 
   const handleExcluirPaciente = async (id) => {
+    const tid = sessaoAuth?.user?.id;
+    if (typeof id === "string" && tid && tid !== "demo") {
+      const { error } = await deletarPaciente(id);
+      if (error) throw new Error(error.message || "Erro ao arquivar paciente");
+    }
     const restantes = pacientesLista.filter(p => p.id !== id);
     setPacientesLista(restantes);
-    if (paciente.id === id) {
+    if (paciente?.id === id) {
       setPaciente(restantes[0] ?? null);
       setAba("historico");
     }
+  };
+
+  const handleRestaurarPaciente = async (id) => {
     const tid = sessaoAuth?.user?.id;
     if (typeof id === "string" && tid && tid !== "demo") {
-      await excluirPaciente(id);
+      const { error } = await restaurarPaciente(id);
+      if (error) return { ok: false, message: error.message || "Erro ao restaurar paciente" };
     }
+    const { data: lista } = await listarPacientes(sessaoAuth.user.id);
+    if (lista) {
+      const mapeados = lista.map(mapearPaciente);
+      setPacientesLista(mapeados);
+      buscarUltimoHumorPorPacientes(mapeados.map(p => p.id))
+        .then(mapa => setHumorAlerta(mapa));
+    }
+    return { ok: true };
   };
 
   if (carregandoAuth) return <TelaCarregando />;
   if (!sessaoAuth) return <TelaLogin onAuth={setSessaoAuth} />;
 
   const terapeutaId = sessaoAuth?.user?.id;
-
-  const proxAgend = _proxAgendDe(paciente.id, agendamentos);
+  const proxAgend = _proxAgendDe(paciente?.id, agendamentos);
   const proxLabel = _labelAgend(proxAgend);
   const abrirAgendamento = (p) => { setPacienteParaAgendar(p ?? paciente); setModalAgendamentoAberto(true); };
+
+  const handleConcluirOnboarding = async () => {
+    setOnboardingVisivel(false);
+    if (terapeutaId && terapeutaId !== "demo") {
+      await marcarOnboardingConcluido(terapeutaId);
+    }
+  };
 
   const carregarSemana = async (inicioSemana, fimSemana) => {
     const { inicio, fim } = agendRangeRef.current;
@@ -4594,15 +6342,24 @@ export default function App() {
 
   if (isCompact) {
     return (
-      <div style={{ display:"flex", flexDirection:"column", height:"100vh", overflow:"hidden", position:"relative", fontFamily:"'DM Sans', system-ui, sans-serif", background:"#f8fafc", color:"#0f172a", fontSize:14 }}>
+      <div style={{ display:"flex", flexDirection:"column", height:"100vh", overflow:"hidden", position:"relative", fontFamily:"'DM Sans', system-ui, sans-serif", background:"#f8fafc", color:"#2C302E", fontSize:14 }}>
 
         {/* Header topo */}
         <div style={{ background:"#fff", borderBottom:"1px solid #f1f5f9", padding:"0 16px", display:"flex", alignItems:"center", height:52, gap:10, flexShrink:0 }}>
-          <div style={{ width:28, height:28, background:"#6366f1", borderRadius:7, display:"flex", alignItems:"center", justifyContent:"center", color:"#fff", fontWeight:900, fontSize:14 }}>C</div>
+          <button onClick={() => setMenuMobileAberto(true)}
+            style={{ background:"none", border:"none", cursor:"pointer", padding:4, fontSize:20, lineHeight:1, color:"#64748b", flexShrink:0 }}>
+            ☰
+          </button>
           <button onClick={() => setMostrarPacientes(true)}
             style={{ flex:1, display:"flex", alignItems:"center", gap:8, background:"#f8fafc", border:"1px solid #e2e8f0", borderRadius:10, padding:"6px 10px", cursor:"pointer" }}>
-            <Avatar iniciais={paciente.iniciais} cor={paciente.cor} tamanho={24} />
-            <span style={{ fontSize:13, fontWeight:700, color:"#0f172a", flex:1, textAlign:"left", overflow:"hidden", whiteSpace:"nowrap", textOverflow:"ellipsis" }}>{paciente.nome}</span>
+            {paciente ? (
+              <>
+                <Avatar iniciais={paciente.iniciais} cor={paciente.cor} tamanho={24} />
+                <span style={{ fontSize:13, fontWeight:700, color:"#2C302E", flex:1, textAlign:"left", overflow:"hidden", whiteSpace:"nowrap", textOverflow:"ellipsis" }}>{paciente.nome}</span>
+              </>
+            ) : (
+              <span style={{ fontSize:13, color:"#94a3b8", flex:1, textAlign:"left" }}>Selecione um paciente</span>
+            )}
             <span style={{ fontSize:12, color:"#94a3b8" }}>▾</span>
           </button>
           <div onClick={abrirAgendamento}
@@ -4616,12 +6373,44 @@ export default function App() {
 
         {/* Conteúdo */}
         <div style={{ flex:1, overflow:"hidden" }}>
-          {aba === "historico" && <TelaHistorico paciente={paciente} isMobile={isMobile} onAgendar={abrirAgendamento} proximaSessao={proxLabel} />}
-          {aba === "mural" && <TelaMural paciente={paciente} />}
-          {aba === "plano" && <TelaPlano paciente={paciente} isMobile={isMobile} terapeutaId={terapeutaId} onAgendar={abrirAgendamento} proximaSessao={proxLabel} />}
-          {aba === "importar" && <TelaImportar paciente={paciente} isMobile={isMobile} terapeutaId={terapeutaId} onSessaoSalva={handleSessaoSalva} agendamentos={agendamentos} onAgendamentoRealizado={id => setAgendamentos(prev => prev.map(a => a.id === id ? { ...a, status:"realizado" } : a))} />}
-          {aba === "insights" && <TelaInsights paciente={paciente} analise={analisarPadroes(paciente.sessoesList)} />}
-          {aba === "perfil" && <TelaPerfil paciente={paciente} isMobile={isMobile} terapeutaId={terapeutaId} terapeutaNome={terapeutaNome} terapeutaEmail={sessaoAuth?.user?.email} onAtualizar={handleAtualizarPaciente} onExcluir={handleExcluirPaciente} />}
+          {mostrarDashboard ? (
+            <TelaDashboard pacientesLista={pacientesLista} agendamentos={agendamentos} terapeutaId={terapeutaId} terapeutaNome={terapeutaNome} />
+          ) : mostrarOrientacoes ? (
+            <TelaOrientacoes />
+          ) : mostrarConfiguracoes ? (
+            <TelaConfiguracoes terapeutaId={terapeutaId} terapeutaEmail={sessaoAuth?.user?.email} perfil={terapeutaPerfil} onSalvar={dados => {
+              setTerapeutaNome(dados.nome);
+              setTerapeutaPerfil(dados);
+              if (!terapeutaPerfil?.nome && dados.nome) {
+                setMostrarConfiguracoes(false);
+                setOnboardingStep(1);
+                setOnboardingVisivel(true);
+              }
+            }} />
+          ) : mostrarAgenda ? (
+            <TelaCalendario agendamentos={agendamentos} setAgendamentos={setAgendamentos} pacientes={pacientesLista} terapeutaId={terapeutaId} onIrParaCopiloto={p => { setPaciente(p); setAba("historico"); setMostrarAgenda(false); }} onCarregarSemana={carregarSemana} />
+          ) : paciente === null ? (
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"center", height:"100%", padding:32 }}>
+              <div style={{ textAlign:"center" }}>
+                <div style={{ fontSize:40, marginBottom:12 }}>👤</div>
+                <div style={{ fontSize:16, fontWeight:700, color:"#475569", marginBottom:8 }}>Nenhum paciente cadastrado</div>
+                <div style={{ fontSize:13, color:"#94a3b8", marginBottom:24 }}>Adicione seu primeiro paciente para começar.</div>
+                <button onClick={() => { setMostrarPacientes(true); setTriggerAbrirPaciente(true); }}
+                  style={{ padding:"10px 24px", background:"#E28743", color:"#fff", border:"none", borderRadius:10, fontSize:13, fontWeight:700, cursor:"pointer" }}>
+                  + Adicionar primeiro paciente
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              {aba === "historico" && <TelaHistorico paciente={paciente} isMobile={isMobile} onAgendar={abrirAgendamento} proximaSessao={proxLabel} />}
+              {aba === "mural" && <TelaMural paciente={paciente} />}
+              {aba === "plano" && <TelaPlano paciente={paciente} isMobile={isMobile} terapeutaId={terapeutaId} onAgendar={abrirAgendamento} proximaSessao={proxLabel} terapeutaPerfil={terapeutaPerfil} />}
+              {aba === "importar" && <TelaImportar paciente={paciente} isMobile={isMobile} terapeutaId={terapeutaId} onSessaoSalva={handleSessaoSalva} agendamentos={agendamentos} onAgendamentoRealizado={id => setAgendamentos(prev => prev.map(a => a.id === id ? { ...a, status:"realizado" } : a))} />}
+              {aba === "insights" && <TelaInsights paciente={paciente} analise={analisarPadroes(paciente.sessoesList)} />}
+              {aba === "perfil" && <TelaPerfil paciente={paciente} isMobile={isMobile} terapeutaId={terapeutaId} terapeutaNome={terapeutaNome} terapeutaEmail={sessaoAuth?.user?.email} onAtualizar={handleAtualizarPaciente} onExcluir={handleExcluirPaciente} />}
+            </>
+          )}
         </div>
 
         {/* Nav bottom */}
@@ -4633,9 +6422,9 @@ export default function App() {
             { id:"perfil", label:"Perfil", icon:"🪪" },
           ].map(a => (
             <button key={a.id} onClick={() => setAba(a.id)}
-              style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:3, border:"none", background:"transparent", cursor:"pointer", borderTop: aba === a.id ? "2px solid #6366f1" : "2px solid transparent" }}>
+              style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:3, border:"none", background:"transparent", cursor:"pointer", borderTop: aba === a.id ? "2px solid #E28743" : "2px solid transparent" }}>
               <span style={{ fontSize:20 }}>{a.icon}</span>
-              <span style={{ fontSize:10, fontWeight: aba === a.id ? 700 : 500, color: aba === a.id ? "#4f46e5" : "#94a3b8" }}>{a.label}</span>
+              <span style={{ fontSize:10, fontWeight: aba === a.id ? 700 : 500, color: aba === a.id ? "#E28743" : "#94a3b8" }}>{a.label}</span>
             </button>
           ))}
         </div>
@@ -4659,7 +6448,57 @@ export default function App() {
                   terapeutaId={terapeutaId}
                   menuAberto={true}
                   onAbrirAgendamento={p => { setPacienteParaAgendar(p); setModalAgendamentoAberto(true); }}
+                  onRestaurar={handleRestaurarPaciente}
+                  humorAlerta={humorAlerta}
+                  abrirModal={triggerAbrirPaciente}
+                  onAbrirModalConsumed={() => setTriggerAbrirPaciente(false)}
+                  onIrParaImportar={p => { setAbaParaNavegar("importar"); setPaciente(p); setMostrarDashboard(false); setMostrarConfiguracoes(false); setMostrarOrientacoes(false); setMostrarAgenda(false); setMostrarPacientes(false); }}
                 />
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Drawer de navegação principal (mobile) */}
+        {menuMobileAberto && (
+          <>
+            <div onClick={() => setMenuMobileAberto(false)}
+              style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.35)", zIndex:40 }} />
+            <div style={{ position:"fixed", top:0, left:0, bottom:0, width:280, background:"#fff", zIndex:50, display:"flex", flexDirection:"column", boxShadow:"4px 0 24px rgba(0,0,0,0.12)" }}>
+              {/* Header do drawer */}
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"0 16px", height:56, borderBottom:"1px solid #f1f5f9" }}>
+                <VinculiAssinatura size="sm" />
+                <button onClick={() => setMenuMobileAberto(false)}
+                  style={{ background:"none", border:"none", cursor:"pointer", fontSize:20, color:"#94a3b8", lineHeight:1, padding:4 }}>
+                  ✕
+                </button>
+              </div>
+              {/* Itens de navegação */}
+              <div style={{ flex:1, overflowY:"auto", padding:"8px 0" }}>
+                {[
+                  { icon:"🏠", label:"Visão Geral", action:() => { setMostrarDashboard(true); setMostrarAgenda(false); setMostrarConfiguracoes(false); setMostrarOrientacoes(false); setMenuMobileAberto(false); } },
+                  { icon:"📅", label:"Agenda", action:() => { setMostrarAgenda(true); setMostrarDashboard(false); setMostrarConfiguracoes(false); setMostrarOrientacoes(false); setMenuMobileAberto(false); } },
+                  { icon:"📖", label:"Orientações de Uso", action:() => { setMostrarOrientacoes(true); setMostrarDashboard(false); setMostrarAgenda(false); setMostrarConfiguracoes(false); setMenuMobileAberto(false); } },
+                  { icon:"⚙️", label:"Configurações", action:() => { setMostrarConfiguracoes(true); setMostrarDashboard(false); setMostrarAgenda(false); setMostrarOrientacoes(false); setMenuMobileAberto(false); } },
+                ].map(item => (
+                  <button key={item.label} onClick={item.action}
+                    style={{ width:"100%", display:"flex", alignItems:"center", gap:12, padding:"14px 20px", background:"none", border:"none", cursor:"pointer", textAlign:"left" }}>
+                    <span style={{ fontSize:20 }}>{item.icon}</span>
+                    <span style={{ fontSize:14, fontWeight:600, color:"#2C302E" }}>{item.label}</span>
+                  </button>
+                ))}
+                <div style={{ margin:"8px 20px", borderTop:"1px solid #f1f5f9" }} />
+                <div style={{ padding:"8px 20px 4px", fontSize:11, fontWeight:700, color:"#94a3b8", textTransform:"uppercase", letterSpacing:"0.06em" }}>
+                  Paciente ativo
+                </div>
+                <button onClick={() => { setMostrarPacientes(true); setMenuMobileAberto(false); }}
+                  style={{ width:"100%", display:"flex", alignItems:"center", gap:10, padding:"10px 20px", background:"none", border:"none", cursor:"pointer" }}>
+                  <Avatar iniciais={paciente.iniciais} cor={paciente.cor} tamanho={32} />
+                  <div style={{ textAlign:"left" }}>
+                    <div style={{ fontSize:13, fontWeight:700, color:"#2C302E" }}>{paciente.nome}</div>
+                    <div style={{ fontSize:11, color:"#94a3b8" }}>Trocar paciente</div>
+                  </div>
+                </button>
               </div>
             </div>
           </>
@@ -4673,7 +6512,7 @@ export default function App() {
 
   return (
     <div style={{ display:"flex", height:"100vh", fontFamily:"'DM Sans', system-ui, sans-serif",
-      background:"#f8fafc", color:"#0f172a", fontSize:14, overflow:"hidden" }}>
+      background:"#f8fafc", color:"#2C302E", fontSize:14, overflow:"hidden" }}>
 
       {/* Sidebar esquerda — lista de pacientes */}
       <div style={{ width: menuAberto ? 280 : 56, flexShrink:0, background:"#fff",
@@ -4681,46 +6520,76 @@ export default function App() {
         height:"100vh", overflow:"hidden", transition:"width 0.25s ease" }}>
 
         {/* Logo + hamburguer */}
-        <div style={{ padding:"0 12px", borderBottom:"1px solid #f1f5f9",
-          display:"flex", alignItems:"center", height:68, flexShrink:0,
-          justifyContent: menuAberto ? "flex-start" : "center", gap:10 }}>
+        <div style={{ borderBottom:"1px solid #f1f5f9", flexShrink:0 }}>
+          {/* Linha da logo + hamburguer */}
+          <div style={{ padding: menuAberto ? "0 14px 0 16px" : "0 6px",
+            display:"flex", alignItems:"center", height:68,
+            justifyContent: menuAberto ? "space-between" : "center", gap:8 }}>
+            {menuAberto ? (
+              <VinculiAssinatura size="sm" />
+            ) : (
+              <VinculiIcon size={28} />
+            )}
+            <button onClick={() => setMenuAberto(v => !v)}
+              style={{ background:"none", border:"none", cursor:"pointer", padding:5,
+                color:"#94a3b8", fontSize:18, lineHeight:1, flexShrink:0,
+                borderRadius:6, display:"flex", alignItems:"center", justifyContent:"center",
+                transition:"color 0.15s" }}>
+              ☰
+            </button>
+          </div>
+          {/* Linha do profissional — visível só quando expandido */}
           {menuAberto && (
-            <>
-              <div style={{ width:32, height:32, background:"#6366f1", borderRadius:8, flexShrink:0,
-                display:"flex", alignItems:"center", justifyContent:"center",
-                color:"#fff", fontWeight:900, fontSize:16 }}>C</div>
-              <div style={{ flex:1, minWidth:0 }}>
-                <div style={{ fontWeight:800, fontSize:14, color:"#0f172a" }}>Copiloto</div>
-                <div style={{ fontSize:10, color:"#94a3b8", fontWeight:600,
-                  textTransform:"uppercase", letterSpacing:"0.06em" }}>TCC · MVP</div>
+            <div style={{ padding:"0 16px 10px", display:"flex", alignItems:"center",
+              justifyContent:"space-between", gap:8 }}>
+              <div style={{ fontSize:12, fontWeight:700, color:"#2C302E",
+                overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                {terapeutaNome
+                  ? `${terapeutaPerfil?.tratamento || "Dr."} ${terapeutaNome.split(" ")[0]}`
+                  : (sessaoAuth?.user?.email ?? "Terapeuta")}
               </div>
-            </>
+              <button onClick={() => signOut()}
+                title="Sair da conta"
+                style={{ fontSize:11, fontWeight:700, color:"#94a3b8",
+                  background:"none", border:"1px solid #e2e8f0", cursor:"pointer",
+                  padding:"3px 10px", borderRadius:6, whiteSpace:"nowrap",
+                  flexShrink:0, transition:"all 0.15s" }}>
+                Sair
+              </button>
+            </div>
           )}
-          <button onClick={() => setMenuAberto(v => !v)}
-            style={{ background:"none", border:"none", cursor:"pointer", padding:6,
-              color:"#64748b", fontSize:20, lineHeight:1, flexShrink:0,
-              borderRadius:6, display:"flex", alignItems:"center", justifyContent:"center" }}>
-            ☰
-          </button>
         </div>
 
         {/* Acordeão de seções — visível quando expandido */}
         {menuAberto ? (
           <div style={{ flex:1, overflowY:"auto", display:"flex", flexDirection:"column" }}>
 
+            {/* ── VISÃO GERAL ── */}
+            <div
+              onClick={() => { setSecaoAtiva("visaogeral"); setMostrarDashboard(true); setMostrarAgenda(false); setMostrarConfiguracoes(false); setMostrarOrientacoes(false); }}
+              style={{ display:"flex", alignItems:"center", gap:8,
+                padding:"10px 16px", cursor:"pointer", userSelect:"none",
+                background: mostrarDashboard ? "#FEF3E2" : "transparent",
+                borderBottom:"1px solid #f1f5f9" }}>
+              <span>🏠</span>
+              <span style={{ fontSize:12, fontWeight:700, textTransform:"uppercase",
+                letterSpacing:"0.06em",
+                color: mostrarDashboard ? "#E28743" : "#64748b" }}>Visão geral</span>
+            </div>
+
             {/* ── SEÇÃO AGENDA ── */}
             <div>
               <div
-                onClick={() => setSecaoAtiva(s => s === "agenda" ? null : "agenda")}
+                onClick={() => { setSecaoAtiva(s => s === "agenda" ? null : "agenda"); setMostrarAgenda(true); setMostrarConfiguracoes(false); setMostrarDashboard(false); setMostrarOrientacoes(false); }}
                 style={{ display:"flex", alignItems:"center", justifyContent:"space-between",
                   padding:"10px 16px", cursor:"pointer", userSelect:"none",
-                  background: secaoAtiva === "agenda" ? "#f5f3ff" : "transparent",
+                  background: secaoAtiva === "agenda" ? "#FEF3E2" : "transparent",
                   borderBottom:"1px solid #f1f5f9" }}>
                 <div style={{ display:"flex", alignItems:"center", gap:8 }}>
                   <span>📅</span>
                   <span style={{ fontSize:12, fontWeight:700, textTransform:"uppercase",
                     letterSpacing:"0.06em",
-                    color: secaoAtiva === "agenda" ? "#4f46e5" : "#64748b" }}>Agenda</span>
+                    color: secaoAtiva === "agenda" ? "#E28743" : "#64748b" }}>Agenda</span>
                 </div>
                 <span style={{ fontSize:10, color:"#cbd5e1", display:"inline-block",
                   transform: secaoAtiva === "agenda" ? "rotate(180deg)" : "rotate(0deg)",
@@ -4731,15 +6600,15 @@ export default function App() {
                 <div style={{ background:"#fafafa" }}>
                   {/* Sub-item: Hoje / Amanhã */}
                   <div
-                    onClick={() => setAbaAgenda("hoje")}
+                    onClick={() => { setAbaAgenda("hoje"); setMostrarAgenda(true); setMostrarConfiguracoes(false); setMostrarDashboard(false); setMostrarOrientacoes(false); }}
                     style={{ display:"flex", alignItems:"center", gap:8,
                       padding:"7px 16px 7px 28px", cursor:"pointer",
-                      background: abaAgenda === "hoje" ? "#ede9fe" : "transparent",
-                      borderLeft: abaAgenda === "hoje" ? "3px solid #6366f1" : "3px solid transparent",
+                      background: abaAgenda === "hoje" ? "#FEF3E2" : "transparent",
+                      borderLeft: abaAgenda === "hoje" ? "3px solid #E28743" : "3px solid transparent",
                       borderBottom:"1px solid #f1f5f9", transition:"all 0.1s" }}>
                     <span style={{ fontSize:12 }}>🗓️</span>
                     <span style={{ fontSize:12, fontWeight: abaAgenda === "hoje" ? 700 : 500,
-                      color: abaAgenda === "hoje" ? "#4f46e5" : "#64748b" }}>
+                      color: abaAgenda === "hoje" ? "#E28743" : "#64748b" }}>
                       Hoje / Amanhã
                     </span>
                   </div>
@@ -4749,22 +6618,22 @@ export default function App() {
                     <AgendaHojeList
                       agendamentos={agendamentos}
                       pacientes={pacientesLista}
-                      onSelect={p => { setPaciente(p); setAba("historico"); }}
+                      onSelect={p => { setPaciente(p); setAba("historico"); setMostrarAgenda(false); }}
                       onNovoAgendamento={abrirAgendamento}
                     />
                   )}
 
                   {/* Sub-item: Calendário */}
                   <div
-                    onClick={() => setAbaAgenda("calendario")}
+                    onClick={() => { setAbaAgenda("calendario"); setMostrarAgenda(true); setMostrarConfiguracoes(false); setMostrarDashboard(false); setMostrarOrientacoes(false); }}
                     style={{ display:"flex", alignItems:"center", gap:8,
                       padding:"7px 16px 7px 28px", cursor:"pointer",
-                      background: abaAgenda === "calendario" ? "#ede9fe" : "transparent",
-                      borderLeft: abaAgenda === "calendario" ? "3px solid #6366f1" : "3px solid transparent",
+                      background: abaAgenda === "calendario" ? "#FEF3E2" : "transparent",
+                      borderLeft: abaAgenda === "calendario" ? "3px solid #E28743" : "3px solid transparent",
                       borderTop:"1px solid #f1f5f9", transition:"all 0.1s" }}>
                     <span style={{ fontSize:12 }}>📆</span>
                     <span style={{ fontSize:12, fontWeight: abaAgenda === "calendario" ? 700 : 500,
-                      color: abaAgenda === "calendario" ? "#4f46e5" : "#64748b" }}>
+                      color: abaAgenda === "calendario" ? "#E28743" : "#64748b" }}>
                       Calendário
                     </span>
                   </div>
@@ -4775,16 +6644,16 @@ export default function App() {
             {/* ── SEÇÃO PACIENTES ── */}
             <div>
               <div
-                onClick={() => setSecaoAtiva(s => s === "pacientes" ? null : "pacientes")}
+                onClick={() => { setSecaoAtiva(s => s === "pacientes" ? null : "pacientes"); setMostrarAgenda(false); setMostrarConfiguracoes(false); setMostrarDashboard(false); setMostrarOrientacoes(false); }}
                 style={{ display:"flex", alignItems:"center", justifyContent:"space-between",
                   padding:"10px 16px", cursor:"pointer", userSelect:"none",
-                  background: secaoAtiva === "pacientes" ? "#f5f3ff" : "transparent",
+                  background: secaoAtiva === "pacientes" ? "#FEF3E2" : "transparent",
                   borderBottom:"1px solid #f1f5f9" }}>
                 <div style={{ display:"flex", alignItems:"center", gap:8 }}>
                   <span>👤</span>
                   <span style={{ fontSize:12, fontWeight:700, textTransform:"uppercase",
                     letterSpacing:"0.06em",
-                    color: secaoAtiva === "pacientes" ? "#4f46e5" : "#64748b" }}>Pacientes</span>
+                    color: secaoAtiva === "pacientes" ? "#E28743" : "#64748b" }}>Pacientes</span>
                 </div>
                 <span style={{ fontSize:10, color:"#cbd5e1", display:"inline-block",
                   transform: secaoAtiva === "pacientes" ? "rotate(180deg)" : "rotate(0deg)",
@@ -4795,14 +6664,57 @@ export default function App() {
                 <TelaPacientes
                   modo="pacientes"
                   pacientes={pacientesLista}
-                  onSelect={p => { setPaciente(p); setAba("historico"); setAbaAgenda("hoje"); }}
+                  onSelect={p => { setPaciente(p); setAba("historico"); setAbaAgenda("hoje"); setMostrarAgenda(false); setMostrarConfiguracoes(false); setMostrarDashboard(false); setMostrarOrientacoes(false); }}
                   pacienteSelecionado={paciente}
                   onNovoPaciente={handleNovoPaciente}
                   terapeutaId={terapeutaId}
                   menuAberto={true}
                   onAbrirAgendamento={p => { setPacienteParaAgendar(p); setModalAgendamentoAberto(true); }}
+                  onRestaurar={handleRestaurarPaciente}
+                  humorAlerta={humorAlerta}
+                  abrirModal={triggerAbrirPaciente}
+                  onAbrirModalConsumed={() => setTriggerAbrirPaciente(false)}
+                  onIrParaImportar={p => { setAbaParaNavegar("importar"); setPaciente(p); setMostrarDashboard(false); setMostrarConfiguracoes(false); setMostrarOrientacoes(false); setMostrarAgenda(false); setAbaAgenda("hoje"); }}
                 />
               )}
+            </div>
+
+            {/* ── ORIENTAÇÕES DE USO ── */}
+            <div
+              onClick={() => { setSecaoAtiva("orientacoes"); setMostrarOrientacoes(true); setMostrarDashboard(false); setMostrarAgenda(false); setMostrarConfiguracoes(false); }}
+              style={{ display:"flex", alignItems:"center", gap:8,
+                padding:"10px 16px", cursor:"pointer", userSelect:"none",
+                background: mostrarOrientacoes ? "#FEF3E2" : "transparent",
+                borderTop:"1px solid #f1f5f9" }}>
+              <span>📋</span>
+              <span style={{ fontSize:12, fontWeight:700, textTransform:"uppercase",
+                letterSpacing:"0.06em",
+                color: mostrarOrientacoes ? "#E28743" : "#64748b" }}>Orientações de Uso</span>
+            </div>
+
+            {/* ── SEÇÃO CONFIGURAÇÕES ── */}
+            <div style={{ marginTop:"auto", borderTop:"1px solid #f1f5f9" }}>
+              <div
+                onClick={() => {
+                  const proximo = secaoAtiva !== "configuracoes";
+                  setSecaoAtiva(proximo ? "configuracoes" : null);
+                  setMostrarConfiguracoes(proximo);
+                  setMostrarOrientacoes(false);
+                  setMostrarDashboard(false);
+                  setMostrarAgenda(false);
+                }}
+                style={{ display:"flex", alignItems:"center", justifyContent:"space-between",
+                  padding:"10px 16px", cursor:"pointer", userSelect:"none",
+                  background: secaoAtiva === "configuracoes" ? "#FEF3E2" : "transparent" }}>
+                <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                  <span>⚙️</span>
+                  <span style={{ fontSize:12, fontWeight:700, textTransform:"uppercase",
+                    letterSpacing:"0.06em",
+                    color: secaoAtiva === "configuracoes" ? "#E28743" : "#64748b" }}>
+                    Configurações
+                  </span>
+                </div>
+              </div>
             </div>
 
           </div>
@@ -4816,6 +6728,8 @@ export default function App() {
               onNovoPaciente={handleNovoPaciente}
               terapeutaId={terapeutaId}
               menuAberto={false}
+              onRestaurar={handleRestaurarPaciente}
+              humorAlerta={humorAlerta}
             />
           </div>
         )}
@@ -4829,18 +6743,37 @@ export default function App() {
           padding:"0 28px", display:"flex", alignItems:"center",
           height:56, flexShrink:0, gap:4 }}>
 
-          {abaAgenda === "calendario" ? (
-            /* Contexto do calendário */
+          {mostrarDashboard ? (
+            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+              <span style={{ fontSize:18 }}>🏠</span>
+              <span style={{ fontSize:14, fontWeight:700, color:"#2C302E" }}>Visão geral</span>
+            </div>
+          ) : mostrarOrientacoes ? (
+            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+              <span style={{ fontSize:18 }}>📋</span>
+              <span style={{ fontSize:14, fontWeight:700, color:"#2C302E" }}>Orientações de Uso</span>
+            </div>
+          ) : mostrarConfiguracoes ? (
+            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+              <span style={{ fontSize:18 }}>⚙️</span>
+              <span style={{ fontSize:14, fontWeight:700, color:"#2C302E" }}>Configurações</span>
+            </div>
+          ) : mostrarAgenda && abaAgenda === "calendario" ? (
             <div style={{ display:"flex", alignItems:"center", gap:8 }}>
               <span style={{ fontSize:18 }}>📆</span>
-              <span style={{ fontSize:14, fontWeight:700, color:"#0f172a" }}>Agenda semanal</span>
+              <span style={{ fontSize:14, fontWeight:700, color:"#2C302E" }}>Agenda: Semana</span>
             </div>
-          ) : (
+          ) : mostrarAgenda ? (
+            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+              <span style={{ fontSize:18 }}>📅</span>
+              <span style={{ fontSize:14, fontWeight:700, color:"#2C302E" }}>Agenda: Hoje / Amanhã</span>
+            </div>
+          ) : paciente === null ? null : (
             <>
               {/* Breadcrumb */}
               <div style={{ display:"flex", alignItems:"center", gap:8, marginRight:24 }}>
                 <Avatar iniciais={paciente.iniciais} cor={paciente.cor} tamanho={28} />
-                <span style={{ fontSize:14, fontWeight:700, color:"#0f172a" }}>{paciente.nome}</span>
+                <span style={{ fontSize:14, fontWeight:700, color:"#2C302E" }}>{paciente.nome}</span>
                 <span style={{ fontSize:12, color:"#cbd5e1" }}>·</span>
                 <span style={{ fontSize:12, color:"#94a3b8" }}>Sessão {paciente.sessoes}</span>
               </div>
@@ -4849,8 +6782,8 @@ export default function App() {
               {abas.map(a => (
                 <button key={a.id} onClick={() => setAba(a.id)}
                   style={{ padding:"6px 16px", border:"none", borderRadius:8, cursor:"pointer",
-                    background: aba === a.id ? "#f0f0ff" : "transparent",
-                    color: aba === a.id ? "#4f46e5" : "#64748b",
+                    background: aba === a.id ? "#FEF3E2" : "transparent",
+                    color: aba === a.id ? "#E28743" : "#64748b",
                     fontWeight: aba === a.id ? 700 : 500, fontSize:13,
                     transition:"all 0.15s" }}>
                   {a.icon} {a.label}
@@ -4859,27 +6792,53 @@ export default function App() {
             </>
           )}
 
-          {/* Próxima sessão + botão agendar */}
-          <div style={{ marginLeft:"auto", display:"flex", alignItems:"center", gap:8 }}>
-            <div style={{ padding:"5px 12px",
-              background: proxLabel.includes("Hoje") ? "#fff1f2" : "#f1f5f9",
-              borderRadius:8, fontSize:12, fontWeight:700,
-              color: proxLabel.includes("Hoje") ? "#dc2626" : "#475569" }}>
-              {proxLabel.includes("Hoje") ? "🔴 " : "📅 "}
-              {proxLabel}
+          {/* Próxima sessão + botão agendar — ocultos nas telas de configurações, dashboard e agenda */}
+          {!mostrarConfiguracoes && !mostrarDashboard && !mostrarAgenda && paciente !== null && (
+            <div style={{ marginLeft:"auto", display:"flex", alignItems:"center", gap:8 }}>
+              <div style={{ padding:"5px 12px",
+                background: proxLabel.includes("Hoje") ? "#fff1f2" : "#f1f5f9",
+                borderRadius:8, fontSize:12, fontWeight:700,
+                color: proxLabel.includes("Hoje") ? "#dc2626" : "#475569" }}>
+                {proxLabel.includes("Hoje") ? "🔴 " : "📅 "}
+                {proxLabel}
+              </div>
+              <button onClick={() => { setPacienteParaAgendar(null); setModalAgendamentoAberto(true); }}
+                style={{ padding:"5px 12px", background:"#E28743", color:"#fff",
+                  border:"none", borderRadius:8, fontSize:12, fontWeight:700,
+                  cursor:"pointer", whiteSpace:"nowrap" }}>
+                + Agendar
+              </button>
             </div>
-            <button onClick={() => { setPacienteParaAgendar(null); setModalAgendamentoAberto(true); }}
-              style={{ padding:"5px 12px", background:"#6366f1", color:"#fff",
-                border:"none", borderRadius:8, fontSize:12, fontWeight:700,
-                cursor:"pointer", whiteSpace:"nowrap" }}>
-              + Agendar
-            </button>
-          </div>
+          )}
         </div>
 
         {/* Conteúdo */}
         <div style={{ flex:1, overflow:"hidden" }}>
-          {abaAgenda === "calendario" ? (
+          {mostrarDashboard ? (
+            <TelaDashboard
+              pacientesLista={pacientesLista}
+              agendamentos={agendamentos}
+              terapeutaId={terapeutaId}
+              terapeutaNome={terapeutaNome}
+            />
+          ) : mostrarOrientacoes ? (
+            <TelaOrientacoes />
+          ) : mostrarConfiguracoes ? (
+            <TelaConfiguracoes
+              terapeutaId={terapeutaId}
+              terapeutaEmail={sessaoAuth?.user?.email}
+              perfil={terapeutaPerfil}
+              onSalvar={dados => {
+                setTerapeutaNome(dados.nome);
+                setTerapeutaPerfil(dados);
+                if (!terapeutaPerfil?.nome && dados.nome) {
+                  setMostrarConfiguracoes(false);
+                  setOnboardingStep(1);
+                  setOnboardingVisivel(true);
+                }
+              }}
+            />
+          ) : abaAgenda === "calendario" ? (
             <TelaCalendario
               agendamentos={agendamentos}
               setAgendamentos={setAgendamentos}
@@ -4888,11 +6847,23 @@ export default function App() {
               onIrParaCopiloto={p => { setPaciente(p); setAba("historico"); setAbaAgenda("hoje"); }}
               onCarregarSemana={carregarSemana}
             />
+          ) : paciente === null ? (
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"center", height:"100%", padding:32 }}>
+              <div style={{ textAlign:"center" }}>
+                <div style={{ fontSize:40, marginBottom:12 }}>👤</div>
+                <div style={{ fontSize:16, fontWeight:700, color:"#475569", marginBottom:8 }}>Nenhum paciente cadastrado</div>
+                <div style={{ fontSize:13, color:"#94a3b8", marginBottom:24 }}>Adicione seu primeiro paciente para começar.</div>
+                <button onClick={() => { setSecaoAtiva("pacientes"); setMostrarAgenda(false); setMostrarConfiguracoes(false); setMostrarDashboard(false); setMostrarOrientacoes(false); setTriggerAbrirPaciente(true); }}
+                  style={{ padding:"10px 24px", background:"#E28743", color:"#fff", border:"none", borderRadius:10, fontSize:13, fontWeight:700, cursor:"pointer" }}>
+                  + Adicionar primeiro paciente
+                </button>
+              </div>
+            </div>
           ) : (
             <>
               {aba === "historico" && <TelaHistorico paciente={paciente} onAgendar={abrirAgendamento} proximaSessao={proxLabel} />}
               {aba === "mural" && <TelaMural paciente={paciente} />}
-              {aba === "plano" && <TelaPlano key={paciente.id} paciente={paciente} terapeutaId={terapeutaId} onAgendar={abrirAgendamento} proximaSessao={proxLabel} />}
+              {aba === "plano" && <TelaPlano key={paciente.id} paciente={paciente} terapeutaId={terapeutaId} onAgendar={abrirAgendamento} proximaSessao={proxLabel} terapeutaPerfil={terapeutaPerfil} />}
               {aba === "importar" && <TelaImportar paciente={paciente} terapeutaId={terapeutaId} onSessaoSalva={handleSessaoSalva} agendamentos={agendamentos} onAgendamentoRealizado={id => setAgendamentos(prev => prev.map(a => a.id === id ? { ...a, status:"realizado" } : a))} />}
               {aba === "insights" && <TelaInsights paciente={paciente} analise={analisarPadroes(paciente.sessoesList)} />}
               {aba === "perfil" && <TelaPerfil paciente={paciente} terapeutaId={terapeutaId} terapeutaNome={terapeutaNome} terapeutaEmail={sessaoAuth?.user?.email} onAtualizar={handleAtualizarPaciente} onExcluir={handleExcluirPaciente} />}
@@ -4917,6 +6888,16 @@ export default function App() {
             setModalAgendamentoAberto(false);
             setPacienteParaAgendar(null);
           }}
+        />
+      )}
+
+      {onboardingVisivel && (
+        <OnboardingModal
+          step={onboardingStep}
+          onNext={() => setOnboardingStep(s => s + 1)}
+          onPrev={() => setOnboardingStep(s => s - 1)}
+          onConcluir={handleConcluirOnboarding}
+          onPular={handleConcluirOnboarding}
         />
       )}
 

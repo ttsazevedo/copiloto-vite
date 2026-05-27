@@ -27,6 +27,47 @@ export async function mediaHumorSemana(pacienteId) {
   return { media: Math.round(media * 10) / 10, error };
 }
 
+export async function buscarUltimoHumorPorPacientes(pacienteIds) {
+  const resultado = new Map();
+  if (!hasSupabase || pacienteIds.length === 0) return resultado;
+
+  const hoje = new Date();
+  hoje.setHours(0, 0, 0, 0);
+
+  const { data, error } = await supabase
+    .from('humor_diario')
+    .select('paciente_id, data')
+    .in('paciente_id', pacienteIds);
+
+  if (error) {
+    console.error('[humor] erro ao buscar últimos registros:', error);
+    return resultado;
+  }
+
+  // Agrupa por paciente_id e mantém apenas a data mais recente
+  const ultimoPorPaciente = new Map();
+  for (const row of data ?? []) {
+    const atual = ultimoPorPaciente.get(row.paciente_id);
+    if (!atual || row.data > atual) {
+      ultimoPorPaciente.set(row.paciente_id, row.data);
+    }
+  }
+
+  // Calcula dias sem registro para cada paciente solicitado
+  for (const id of pacienteIds) {
+    const ultimaData = ultimoPorPaciente.get(id);
+    if (!ultimaData) {
+      resultado.set(id, 999);
+    } else {
+      const ultima = new Date(ultimaData + 'T00:00:00');
+      const dias = Math.floor((hoje - ultima) / 86_400_000);
+      resultado.set(id, dias);
+    }
+  }
+
+  return resultado;
+}
+
 // Compara a média dos últimos N/2 dias com os N/2 anteriores
 export async function detectarTendenciaHumor(pacienteId) {
   if (!hasSupabase) return { tendencia: 'estavel', error: null };

@@ -1,14 +1,7 @@
 // ─── SERVIÇO DE IA: Gemini (primário) → Claude (fallback) ───
 
-import { GoogleGenAI } from "@google/genai";
-
-const GEMINI_KEY = import.meta.env.VITE_GEMINI_API_KEY;
-const ANTHROPIC_KEY = import.meta.env.VITE_ANTHROPIC_API_KEY;
-
-const GEMINI_MODEL = 'gemini-3-flash-preview';
+const GEMINI_MODEL = 'gemini-1.5-flash';
 const CLAUDE_MODEL = 'claude-sonnet-4-6';
-
-const genai = GEMINI_KEY ? new GoogleGenAI({ apiKey: GEMINI_KEY }) : null;
 
 // ─── VALIDAÇÃO DE JSON ───
 
@@ -31,9 +24,8 @@ function validarPlano(obj) {
     typeof obj === 'object' &&
     typeof obj.objetivo === 'string' &&
     Array.isArray(obj.tecnicas) &&
-    Array.isArray(obj.perguntas) &&
-    Array.isArray(obj.distorcoes_foco) &&
-    typeof obj.tarefa === 'string'
+    typeof obj.tarefa === 'string' &&
+    (Array.isArray(obj.perguntas) || Array.isArray(obj.fluxoSocratico))
   );
 }
 
@@ -73,82 +65,71 @@ Retorne APENAS um JSON válido (sem markdown, sem texto extra) com esta estrutur
 }`;
 }
 
-function promptGerarPlano(paciente, ultimaSessao) {
-  const linha = paciente.linha || 'tcc';
-  return `Você é um copiloto clínico para psicólogos especializado em ${linha}.
-Gere um plano para a PRÓXIMA sessão com base no histórico do paciente.
+// ─── HELPERS PARA PROMPT DE PLANO ───
 
-PACIENTE: ${paciente.nome}
-QUEIXA: ${paciente.queixa || ''}
-META: ${paciente.meta || ''}
-LINHA TERAPÊUTICA: ${linha}
+function getNomeLinha(linha) {
+  const nomes = {
+    tcc: 'Terapia Cognitivo-Comportamental (TCC)',
+    psicanalise: 'Psicanálise',
+    gestalt: 'Gestalt-terapia',
+    junguiana: 'Psicologia Analítica Junguiana',
+    humanista: 'Abordagem Centrada na Pessoa (ACP)',
+    comportamental: 'Análise do Comportamento (ABA/ACT)',
+  };
+  return nomes[linha] || linha || 'abordagem não especificada';
+}
 
-ÚLTIMA SESSÃO (${ultimaSessao.data || ''}):
-Resumo: ${ultimaSessao.resumo || ''}
-Temas: ${(ultimaSessao.temas || []).join(', ')}
-Distorções: ${(ultimaSessao.distorcoes || []).join(', ')}
-Técnicas: ${(ultimaSessao.tecnicas || []).join(', ')}
-Tarefa dada: ${ultimaSessao.tarefa_proxima || 'nenhuma'}
-
-Retorne APENAS um JSON válido (sem markdown, sem texto extra):
-{
-  "objetivo": "objetivo principal da próxima sessão",
-  "tecnicas": ["2 a 4 técnicas recomendadas"],
-  "perguntas": ["3 a 5 perguntas terapêuticas sugeridas"],
-  "distorcoes_foco": ["distorções a trabalhar"],
-  "tarefa": "tarefa para o paciente até a próxima sessão",
-  "observacoes": ""
-}`;
+function formatarSessaoParaPrompt(s, indice) {
+  const label = indice === 0 ? 'SESSÃO MAIS RECENTE' : `SESSÃO ANTERIOR ${indice}`;
+  return `--- ${label} | Sessão nº${s.numero ?? '?'} | Data: ${s.data ?? 'não informada'} ---
+Resumo clínico: ${s.resumo || 'Não registrado'}
+Temas trabalhados: ${(s.temas || []).join(', ') || 'Não registrado'}
+Distorções identificadas: ${(s.distorcoes || []).join(', ') || 'Nenhuma'}
+Técnicas utilizadas: ${(s.tecnicas || []).join(', ') || 'Nenhuma'}
+Emoções (início → fim da sessão): ${s.humor_inicio ?? '?'}/10 → ${s.humor_fim ?? '?'}/10
+Tarefa prescrita nesta sessão: ${s.tarefa_proxima || 'Nenhuma'}
+Resultado da tarefa anterior: ${s.resultado_tarefa || 'Não registrado'}
+Alertas clínicos: ${(s.alertas || []).join(', ') || 'Nenhum'}`.trim();
 }
 
 // ─── CHAMADAS À API ───
 
 async function chamarGemini(prompt) {
-  if (!genai) throw new Error('VITE_GEMINI_API_KEY não configurada');
-  const response = await genai.models.generateContent({
-    model: GEMINI_MODEL,
-    contents: prompt,
+  const resp = await fetch('/api/gemini', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ provider: 'gemini', prompt, model: GEMINI_MODEL }),
   });
-  const text = response.text;
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(`Gemini HTTP ${resp.status}: ${JSON.stringify(err).slice(0, 200)}`);
+  }
+  const { text } = await resp.json();
   if (!text) throw new Error('Gemini retornou resposta vazia');
   return extrairJSON(text);
 }
 
 async function chamarClaude(prompt) {
-  if (!ANTHROPIC_KEY) throw new Error('VITE_ANTHROPIC_API_KEY não configurada');
-  const resp = await fetch('https://api.anthropic.com/v1/messages', {
+  const resp = await fetch('/api/gemini', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': ANTHROPIC_KEY,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true',
-    },
-    body: JSON.stringify({
-      model: CLAUDE_MODEL,
-      max_tokens: 1024,
-      messages: [{ role: 'user', content: prompt }],
-    }),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ provider: 'claude', prompt, model: CLAUDE_MODEL }),
   });
   if (!resp.ok) {
-    const errBody = await resp.text().catch(() => '');
-    console.error('[Claude] Erro body:', errBody);
-    throw new Error(`Claude HTTP ${resp.status}: ${errBody.slice(0, 300)}`);
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(`Claude HTTP ${resp.status}: ${JSON.stringify(err).slice(0, 200)}`);
   }
-  const json = await resp.json();
-  const text = json.content?.[0]?.text;
+  const { text } = await resp.json();
   if (!text) throw new Error('Claude retornou resposta vazia');
   return extrairJSON(text);
 }
 
 async function chamarComFallback(prompt, onProviderChange) {
-  if (genai) {
-    try {
-      onProviderChange?.('gemini');
-      return { resultado: await chamarGemini(prompt), provider: 'gemini' };
-    } catch (errGemini) {
-      console.warn('[IA] Gemini falhou, tentando Claude:', errGemini.message);
-    }
+  try {
+    onProviderChange?.('gemini');
+    return { resultado: await chamarGemini(prompt), provider: 'gemini' };
+  } catch (errGemini) {
+    console.warn('[IA] Gemini falhou, tentando Claude:', errGemini.message);
   }
   onProviderChange?.('claude');
   try {
@@ -169,8 +150,131 @@ export async function extrairSessaoDeTexto(texto, linha = 'tcc', onProviderChang
   return { sessao: resultado, provider };
 }
 
-export async function gerarPlanoSessao(paciente, ultimaSessao, onProviderChange) {
-  const prompt = promptGerarPlano(paciente, ultimaSessao);
+export async function gerarPlanoSessao(paciente, sessoesInput, janelaContexto = 3, onProviderChange) {
+  const janela = Math.min(janelaContexto || 3, 5);
+  const sessoes = Array.isArray(sessoesInput)
+    ? sessoesInput.slice(0, janela)
+    : [sessoesInput].filter(Boolean);
+
+  const nSessoes = sessoes.length;
+
+  const blocoSessoes = sessoes.map(formatarSessaoParaPrompt).join('\n\n');
+
+  const todasDistorcoes = sessoes.flatMap(s => s.distorcoes || []);
+  const distorcoesRecorrentes = [...new Set(
+    todasDistorcoes.filter(d => todasDistorcoes.filter(x => x === d).length > 1)
+  )];
+
+  const todosTemas = sessoes.flatMap(s => s.temas || []);
+  const temasRecorrentes = [...new Set(
+    todosTemas.filter(t => todosTemas.filter(x => x === t).length > 1)
+  )];
+
+  const evolucaoHumor = sessoes
+    .map(s => s.humor_fim ?? null)
+    .filter(v => v !== null)
+    .join(' → ');
+
+  const tarefasResultado = sessoes
+    .filter(s => s.resultado_tarefa)
+    .map(s => `Sessão ${s.numero}: ${s.resultado_tarefa}`)
+    .join(' | ');
+
+  const prompt = `Você é um copiloto clínico especializado em ${getNomeLinha(paciente.linha)}.
+Sua função é ajudar o terapeuta a preparar a PRÓXIMA sessão com base no histórico longitudinal do paciente.
+Você é um assistente de preparação pré-sessão — não conduz sessões, não diagnostica, não prescreve.
+
+## PERFIL DO PACIENTE
+Nome: ${paciente.nome}
+Queixa principal: ${paciente.queixa || 'Não informada'}
+Diagnóstico (se registrado): ${paciente.diagnostico || 'Não fechado ainda'}
+Abordagem terapêutica: ${getNomeLinha(paciente.linha)}
+Meta terapêutica registrada: ${paciente.meta || 'Não definida'}
+Total de sessões realizadas: ${paciente.sessoes || nSessoes}
+Nível de risco clínico: ${paciente.risco || 'baixo'}
+
+## HISTÓRICO DAS ÚLTIMAS ${nSessoes} SESSÃO(ÕES)
+${blocoSessoes}
+
+## PADRÕES IDENTIFICADOS NO HISTÓRICO
+Distorções que aparecem em 2 ou mais sessões: ${distorcoesRecorrentes.length > 0 ? distorcoesRecorrentes.join(', ') : 'Nenhuma identificada ainda'}
+Temas que reaparecem em múltiplas sessões: ${temasRecorrentes.length > 0 ? temasRecorrentes.join(', ') : 'Nenhum identificado ainda'}
+Evolução do humor ao final das sessões: ${evolucaoHumor || 'Dados insuficientes'}
+Padrão de adesão às tarefas: ${tarefasResultado || 'Sem histórico de tarefas ainda'}
+
+## INSTRUÇÕES — LEIA COM ATENÇÃO ANTES DE GERAR
+
+### PROFUNDIDADE CLÍNICA — OBRIGATÓRIO
+- PROIBIDO tomar o caminho óbvio: não gere análise genérica que serviria para qualquer paciente com essa queixa. Identifique o padrão específico deste caso, neste momento do processo.
+- Explore o que NÃO está sendo dito: que dor pode estar implícita no histórico, ainda não verbalizada explicitamente na sessão?
+- Se o histórico sugerir critérios clínicos ainda não explorados (padrões de evitação, comorbidades potenciais, marcos diagnósticos não avaliados), sinalize no campo "obs" — sem diagnosticar, mas indicando ao terapeuta que vale avaliar.
+- O campo "focoPrincipal" deve ter no mínimo 3 linhas e justificar POR QUÊ este é o foco, com base em evidências concretas do histórico — não apenas descrever o quê.
+- Ao terminar de gerar internamente, aplique este teste antes de retornar: "Um terapeuta lendo este plano diria que a IA entendeu este caso específico, ou que gerou algo que serviria para qualquer paciente com ansiedade/depressão?" Se for a segunda opção, refaça com mais especificidade.
+
+### FLUXO SOCRÁTICO — OBRIGATÓRIO
+- As perguntas devem passar em DOIS TESTES antes de serem incluídas:
+  TESTE 1 — ESPECIFICIDADE: "Esta pergunta é específica a ESTE paciente neste momento, ou seria válida para qualquer pessoa com essa queixa?" → Se for genérica, reformule ou descarte.
+  TESTE 2 — INTENÇÃO OCULTA: "Esta pergunta revela ao paciente o que o terapeuta está investigando?" → Se sim, reformule. O paciente deve chegar à conclusão pelos próprios passos, sem perceber para onde está sendo conduzido.
+- Evite perguntas excessivamente abertas que o paciente não conseguirá responder de forma produtiva.
+- Cada eixo deve ter exatamente 2 perguntas em progressão: a segunda aprofunda e pressupõe a primeira.
+- Os 3 eixos são FIXOS, nessa ordem exata:
+  Eixo 1: "Investigação de evidências" — ancorar o pensamento automático na realidade concreta, antes de qualquer questionamento ou reestruturação.
+  Eixo 2: "Exploração de perspectiva" — ampliar o campo de visão sem impor uma conclusão. Só acontece após o Eixo 1 ter sido trabalhado.
+  Eixo 3: "Construção de resposta alternativa" — avançar para reestruturação apenas quando as evidências já foram exploradas nos eixos anteriores.
+
+### CONTINUIDADE TERAPÊUTICA — OBRIGATÓRIO
+- A tarefa NÃO pode ser genérica. Especifique: em qual tipo de situação, com qual objetivo clínico, conectada ao que foi trabalhado neste histórico.
+- "itensRevisar" deve refletir o resultado real da tarefa anterior (se disponível) e abrir perguntas clínicas concretas — não tópicos vagos.
+- Se houver distorções ou temas recorrentes identificados, o plano DEVE endereçá-los explicitamente.
+- Baseie o plano no PADRÃO LONGITUDINAL, não apenas na sessão mais recente.
+
+### RISCO E SEGURANÇA
+- Se risco for "alto", defina urgencia como "alto" e coloque avaliação de segurança como primeiro item de "itensRevisar".
+- Se qualquer sessão do histórico contiver alerta de ideação, inclua revisão de segurança nos "itensRevisar", independentemente do risco atual.
+
+Retorne SOMENTE o JSON abaixo. Sem texto antes, sem texto depois, sem markdown, sem explicações.
+
+{
+  "objetivo": "string — objetivo clínico central da próxima sessão, específico a este caso",
+  "itensRevisar": [
+    "string — item concreto para revisar no início da sessão",
+    "string — segundo item"
+  ],
+  "focoPrincipal": "string — mínimo 3 linhas explicando O QUÊ e POR QUÊ, com base no histórico",
+  "fluxoSocratico": [
+    {
+      "eixo": "Investigação de evidências",
+      "descricao": "string — como este eixo se aplica especificamente a este caso",
+      "perguntas": [
+        { "id": "p1", "texto": "string — pergunta 1, específica ao caso", "editado": false },
+        { "id": "p2", "texto": "string — pergunta 2, aprofunda a primeira", "editado": false }
+      ]
+    },
+    {
+      "eixo": "Exploração de perspectiva",
+      "descricao": "string — como este eixo se aplica especificamente a este caso",
+      "perguntas": [
+        { "id": "p3", "texto": "string", "editado": false },
+        { "id": "p4", "texto": "string", "editado": false }
+      ]
+    },
+    {
+      "eixo": "Construção de resposta alternativa",
+      "descricao": "string — como este eixo se aplica especificamente a este caso",
+      "perguntas": [
+        { "id": "p5", "texto": "string", "editado": false },
+        { "id": "p6", "texto": "string", "editado": false }
+      ]
+    }
+  ],
+  "tecnicas": ["string — técnica 1 com contexto de aplicação", "string — técnica 2"],
+  "tarefa": "string — tarefa específica: situação + objetivo clínico + forma de registro",
+  "obs": "string — o que o histórico longitudinal revela que a leitura de uma única sessão não revelaria; padrões, resistências, marcos, dores implícitas",
+  "duracaoSugerida": "50 min",
+  "urgencia": "normal",
+  "contextoUtilizado": ${nSessoes}
+}`;
+
   const { resultado, provider } = await chamarComFallback(prompt, onProviderChange);
   if (!validarPlano(resultado)) {
     throw new Error('IA retornou estrutura de plano inválida');
