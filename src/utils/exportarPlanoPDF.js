@@ -31,7 +31,41 @@ function secao(titulo, conteudo, bgHeader = '#f8fafc', borderColor = '#e2e8f0') 
   `;
 }
 
+async function logoVinculiBase64() {
+  const svgStr = `
+    <svg width="160" height="44" viewBox="0 0 240 64"
+         xmlns="http://www.w3.org/2000/svg">
+      <path d="M 10 20 Q 36 10 36 32 Q 36 54 10 44"
+            fill="none" stroke="#534AB7" stroke-width="2.5"
+            stroke-linecap="round"/>
+      <path d="M 62 20 Q 36 10 36 32 Q 36 54 62 44"
+            fill="none" stroke="#7F77DD" stroke-width="2.5"
+            stroke-linecap="round"/>
+      <circle cx="36" cy="32" r="3" fill="#534AB7"/>
+      <text x="80" y="40" font-size="26" font-weight="300"
+            letter-spacing="0.5" fill="#26215C"
+            font-family="ui-sans-serif,system-ui,sans-serif">Vinculi</text>
+    </svg>
+  `;
+  const blob = new Blob([svgStr], { type: 'image/svg+xml' });
+  const url  = URL.createObjectURL(blob);
+  return new Promise((resolve) => {
+    const img    = new Image();
+    img.onload   = () => {
+      const c   = document.createElement('canvas');
+      c.width   = 320;
+      c.height  = 88;
+      c.getContext('2d').drawImage(img, 0, 0, 320, 88);
+      URL.revokeObjectURL(url);
+      resolve(c.toDataURL('image/png'));
+    };
+    img.src = url;
+  });
+}
+
 export async function exportarPlanoPDF(plano, paciente, terapeutaPerfil) {
+  const logoPng = await logoVinculiBase64();
+
   const hoje = new Date().toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
   const abordagem = LINHA_LABELS[paciente.linha] || paciente.linha || 'Não especificada';
   const nomePacienteArquivo = (paciente.nome || 'paciente').replace(/[^a-zA-Z0-9]/g, '_');
@@ -70,18 +104,19 @@ export async function exportarPlanoPDF(plano, paciente, terapeutaPerfil) {
   `).join('');
 
   const terapeutaLine = nomeTerapeuta
-    ? `<div style="margin-top:10px;font-size:11px;opacity:0.85;">${esc(tratamento)} ${esc(nomeTerapeuta)}${crp ? ` — CRP: ${esc(crp)}` : ''}</div>`
+    ? `<div style="margin-top:10px;font-size:11px;font-weight:300;letter-spacing:0.5px;font-family:ui-sans-serif,system-ui,sans-serif;color:#EEEDFE;">${esc(tratamento)} ${esc(nomeTerapeuta)}${crp ? ` — CRP: ${esc(crp)}` : ''}</div>`
     : '';
 
   const html = `
     <div style="padding:36px 36px 56px 36px;font-family:Arial,sans-serif;color:#1e293b;font-size:12px;line-height:1.6;width:794px;box-sizing:border-box;background:#fff;">
 
-      <div style="background:#6366f1;color:white;padding:22px 24px;border-radius:10px;margin-bottom:18px;">
-        <div style="font-size:18px;font-weight:700;margin-bottom:2px;">Vinculi</div>
-        <div style="font-size:12px;opacity:0.85;">Plano de Sessão</div>
+      <div style="background:#26215C;color:white;padding:22px 24px;border-radius:10px;margin-bottom:0;">
+        <img src="${logoPng}" style="height:36px;display:block;margin-bottom:4px;" />
+        <div style="font-size:11px;color:#AFA9EC;margin-bottom:2px;">elo entre terapeuta e paciente</div>
         ${terapeutaLine}
-        <div style="font-size:10px;opacity:0.7;margin-top:4px;">Gerado em ${hoje}</div>
+        <div style="font-size:10px;color:#AFA9EC;margin-top:4px;">Gerado em ${hoje}</div>
       </div>
+      <div style="height:1px;background:rgba(83,74,183,0.4);margin-bottom:18px;"></div>
 
       <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px;margin-bottom:18px;">
         <div style="display:flex;gap:0;flex-wrap:wrap;">
@@ -150,7 +185,7 @@ export async function exportarPlanoPDF(plano, paciente, terapeutaPerfil) {
     const pageH = pdf.internal.pageSize.getHeight();
     const imgW = pageW;
     const imgH = (canvas.height * pageW) / canvas.width;
-    const sliceH = pageH - 8; // 8mm de margem de segurança na quebra de página
+    const sliceH = pageH - 12; // 12mm de margem de segurança na quebra de página
 
     let posY = 0;
     pdf.addImage(imgData, 'PNG', 0, posY, imgW, imgH);
