@@ -82,7 +82,7 @@ export async function exportarPlanoPDF(plano, paciente, terapeutaPerfil) {
 
       <div style="background:#ffffff;padding:20px 24px;border-radius:10px;margin-bottom:0;border:1px solid #f1f5f9;">
         <img src="${LOGO_VINCULI}" style="height:36px;display:block;margin-bottom:4px;" />
-        <div style="font-size:11px;color:#94a3b8;margin-bottom:2px;">elo entre terapeuta e paciente</div>
+        <div style="font-size:11px;color:#94a3b8;margin-bottom:2px;">Elo entre terapeuta e paciente</div>
         ${terapeutaLine}
         <div style="font-size:10px;color:#94a3b8;margin-top:4px;">Gerado em ${hoje}</div>
       </div>
